@@ -5,15 +5,20 @@ Citation Information
 References
 ##########
 
+This software consists of extension routines for the set of
+`pointCollection <https://github.com/smithb/pointCollection>`_ tools.
 This software is developed with the goal of supporting science applications for
 the NASA ICESat-2 mission. This work was initially supported by an appointment to
 the NASA Postdoctoral Program at NASA Goddard Space Flight Center, administered
 by Universities Space Research Association under contract with NASA. This work
 is developed in conjunction with other ICESat-2 projects.
 
-This software consists of extension routines for the set of
-`pointCollection <https://github.com/smithb/pointCollection>`_ tools
+The programs included in this software have contributed most recently to the
+following work:
 
+    T. C. Sutterley, T. Markus, T. A. Neumann, M. R. van den Broeke, J. M. van Wessem, and S. R. M. Ligtenberg,
+    "Antarctic ice shelf thickness change from multimission lidar mapping", *The Cryosphere*,
+    13, 1801--1817, (2019). `doi:tc-13-1801-2019 <https://doi.org/10.5194/tc-13-1801-2019>`_
 
 Contributors
 ############

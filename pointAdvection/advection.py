@@ -86,8 +86,8 @@ class advection():
         kwargs.setdefault('method', 'bilinear')
         kwargs.setdefault('fill_value', np.nan)
         # set default class attributes
-        self.x=kwargs['x']
-        self.y=kwargs['y']
+        self.x=np.atleast_1d(kwargs['x']).astype('f')
+        self.y=np.atleast_1d(kwargs['y']).astype('f')
         self.t=kwargs['t']
         self.x0=None
         self.y0=None
@@ -108,15 +108,15 @@ class advection():
         filename: str
             input filename
         """
-        #-- check if filename is open file object
+        # check if filename is open file object
         if isinstance(filename, io.IOBase):
             self.filename = copy.copy(filename)
         else:
-            #-- tilde-expand input filename
+            # tilde-expand input filename
             self.filename = os.path.expanduser(filename)
-            #-- check if file presently exists with input case
+            # check if file presently exists with input case
             if not os.access(self.filename,os.F_OK):
-                #-- search for filename without case dependence
+                # search for filename without case dependence
                 basename = os.path.basename(filename)
                 directory = os.path.dirname(os.path.expanduser(filename))
                 f = [f for f in os.listdir(directory) if re.match(basename,f,re.I)]
@@ -124,7 +124,7 @@ class advection():
                     errmsg = '{0} not found in file system'.format(filename)
                     raise FileNotFoundError(errmsg)
                 self.filename = os.path.join(directory,f.pop())
-        #-- print filename
+        # print filename
         logging.debug(self.filename)
         return self
 
@@ -160,10 +160,11 @@ class advection():
             U=UV.z[:,:,0]*scale, V=UV.z[:,:,1]*scale))
         # copy projection from geotiff to output pc object
         self.grid.projection = copy.copy(UV.projection)
-        # set the spacing of grid
+        # set the spacing and dimensions of grid
         dx = self.grid.x[1] - self.grid.x[0]
         dy = self.grid.y[1] - self.grid.y[0]
         setattr(self.grid, 'spacing', (dx, dy))
+        setattr(self.grid, 'ndim', self.grid.U.ndim)
         return self
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
@@ -198,20 +199,23 @@ class advection():
         # check that there are points within the velocity file
         if not self.inside_polygon(self.x,self.y).any():
             raise ValueError('No points within ice velocity image')
+        # swap orientation of axes
+        setattr(self.grid, 'ndim', self.grid.U.ndim)
+        if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
+            self.grid.U = np.transpose(self.grid.U, axes=(1,2,0))
+            self.grid.V = np.transpose(self.grid.V, axes=(1,2,0))
+            self.grid.t_axis = 2
         # create mask for invalid velocity points
-        mask = ((self.grid.U.data == self.grid.U.fill_value) & \
-            (self.grid.V.data == self.grid.V.fill_value))
+        mask = ((self.grid.U.data == self.grid.fill_value) & \
+            (self.grid.V.data == self.grid.fill_value))
+        # check if any grid values are nan
         mask |= np.isnan(self.grid.U.data) | np.isnan(self.grid.V.data)
-        self.grid.U.mask = np.copy(mask)
-        self.grid.V.mask = np.copy(mask)
         # use scale to convert from m/yr to m/s
         self.grid.U *= scale
         self.grid.V *= scale
         # update fill values in velocity grids
-        self.grid.U.data[self.grid.U.mask] = self.fill_value
-        self.grid.V.data[self.grid.V.mask] = self.fill_value
-        self.grid.U.fill_value = copy.copy(self.fill_value)
-        self.grid.V.fill_value = copy.copy(self.fill_value)
+        self.grid.U[mask] = self.fill_value
+        self.grid.V[mask] = self.fill_value
         # set the spacing of grid
         dx = self.grid.x[1] - self.grid.x[0]
         dy = self.grid.y[1] - self.grid.y[0]
@@ -219,7 +223,7 @@ class advection():
         return self
 
     # PURPOSE: build a data object from a list of other data objects
-    def from_list(self, D_list, buffer=5e4, scale=1.0/31557600.0):
+    def from_list(self, D_list, sort=False, buffer=5e4, scale=1.0/31557600.0):
         """
         Build a data object from a list of other data objects
 
@@ -227,6 +231,8 @@ class advection():
         ----------
         D_list: list
             pointCollection grid objects
+        sort: bool, default False
+            sort the list of data objects before merging
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
@@ -237,12 +243,18 @@ class advection():
         xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
         ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
         # read input velocity data from grid objects
-        self.grid = griddata().from_list(D_list)
+        self.grid = griddata().from_list(D_list, sort=sort)
         # crop grid data to bounds
         self.grid.crop(xlimits,ylimits)
         # check that there are points within the velocity file
         if not self.inside_polygon(self.x,self.y).any():
             raise ValueError('No points within ice velocity image')
+        # swap orientation of axes
+        setattr(self.grid, 'ndim', self.grid.U.ndim)
+        if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
+            self.grid.U = np.transpose(self.grid.U, axes=(1,2,0))
+            self.grid.V = np.transpose(self.grid.V, axes=(1,2,0))
+            self.grid.t_axis = 2
         # use scale to convert from m/yr to m/s
         self.grid.U *= scale
         self.grid.V *= scale
@@ -616,7 +628,8 @@ class advection():
         # and within the extents of the input velocity map
         v, = np.nonzero(np.isfinite(kwargs['x']) & np.isfinite(kwargs['y']) &
             self.inside_polygon(kwargs['x'],kwargs['y']))
-        if not np.any(v):
+        # check that there are indice values (0 is falsy)
+        if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # calculating indices for original grid
         xmin,xmax,ymin,ymax = self.grid.extent
@@ -679,14 +692,17 @@ class advection():
         # and within the extents of the input velocity map
         v, = np.nonzero(np.isfinite(kwargs['x']) & np.isfinite(kwargs['y']) &
             self.inside_polygon(kwargs['x'],kwargs['y']))
-        if not np.any(v):
+        # check that there are indice values (0 is falsy)
+        if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # create mask for invalid values
         indy,indx = np.nonzero((self.grid.U == self.fill_value) |
-            (self.grid.V == self.fill_value))
+            (self.grid.V == self.fill_value) |
+            (np.isnan(self.grid.U)) | (np.isnan(self.grid.V)))
         self.grid.U[indy,indx] = 0.0
         self.grid.V[indy,indx] = 0.0
         mask = np.zeros((self.grid.shape))
+        mask[indy,indx] = 1.0
         # build spline interpolants for input grid
         if not self.interpolant:
             # use scipy bivariate splines to interpolate values
@@ -701,7 +717,7 @@ class advection():
                 kx=kwargs['kx'], ky=kwargs['ky'])
         # create mask for invalid values
         invalid = np.ceil(self.interpolant['mask'].ev(
-            kwargs['x'][v],kwargs['y'][v]),dtype=bool)
+            kwargs['x'][v],kwargs['y'][v])).astype(bool)
         masked_values = np.where(invalid, np.nan, 0.0)
         # calculate interpolated data
         U[v] = self.interpolant['U'].ev(
@@ -755,23 +771,24 @@ class advection():
         # and within the extents of the input velocity map
         v, = np.nonzero(np.isfinite(kwargs['x']) & np.isfinite(kwargs['y']) &
             self.inside_polygon(kwargs['x'],kwargs['y']))
-        if not np.any(v):
+        # check that there are indice values (0 is falsy)
+        if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # build regular grid interpolants for input grid
         if not self.interpolant:
             # use scipy regular grid to interpolate values for a given method
             # will extrapolate velocities forward in time if outside range
             self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.t,self.grid.y,self.grid.x), self.grid.U,
+                (self.grid.y,self.grid.x,self.grid.t), self.grid.U,
                 method=kwargs['method'], bounds_error=False)
             self.interpolant['V'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.t,self.grid.y,self.grid.x), self.grid.V,
+                (self.grid.y,self.grid.x,self.grid.t), self.grid.V,
                 method=kwargs['method'], bounds_error=False)
         # calculate interpolated data
         U[v] = self.interpolant['U'].__call__(
-            np.c_[kwargs['t'][v],kwargs['y'][v],kwargs['x'][v]])
+            np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
         V[v] = self.interpolant['V'].__call__(
-            np.c_[kwargs['t'][v],kwargs['y'][v],kwargs['x'][v]])
+            np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
         # replace invalid values with fill value
         U[np.isnan(U)] = kwargs['fill_value']
         V[np.isnan(V)] = kwargs['fill_value']
