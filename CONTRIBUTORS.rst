@@ -1,0 +1,3 @@
+- `Daniel Shapero (University of Washington) <http://psc.apl.uw.edu/people/investigators/daniel-shapero/>`_
+- `Ben Smith (University of Washington) <http://psc.apl.uw.edu/people/investigators/ben-smith/>`_
+- `Tyler Sutterley (University of Washington) <http://psc.apl.uw.edu/people/investigators/tyler-sutterley/>`_
