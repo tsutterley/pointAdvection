@@ -44,13 +44,14 @@ Dependencies
 
 This software is also dependent on other commonly used Python packages:
 
-- `numpy: Scientific Computing Tools For Python <https://numpy.org>`_
-- `scipy: Scientific Tools for Python <https://docs.scipy.org/doc//>`_
-- `matplotlib: Python 2D plotting library <https://matplotlib.org/>`_
-- `h5py: Python interface for Hierarchal Data Format 5 (HDF5) <http://h5py.org>`_
-- `netCDF4: Python interface to the netCDF C library <https://unidata.github.io/netcdf4-python/netCDF4/index.html>`_
+- `dateutil: powerful extensions to datetime <https://dateutil.readthedocs.io/en/stable/>`_
 - `gdal: Pythonic interface to the Geospatial Data Abstraction Library (GDAL) <https://pypi.python.org/pypi/GDAL>`_
+- `h5py: Python interface for Hierarchal Data Format 5 (HDF5) <http://h5py.org>`_
+- `matplotlib: Python 2D plotting library <https://matplotlib.org/>`_
+- `netCDF4: Python interface to the netCDF C library <https://unidata.github.io/netcdf4-python/netCDF4/index.html>`_
+- `numpy: Scientific Computing Tools For Python <https://numpy.org>`_
 - `pyproj: Python interface to PROJ library <https://pypi.org/project/pyproj/>`_
+- `scipy: Scientific Tools for Python <https://docs.scipy.org/doc//>`_
 
 Disclaimer
 ##########

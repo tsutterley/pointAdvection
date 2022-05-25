@@ -235,6 +235,7 @@ RUN pip3 install --no-cache-dir \
         netCDF4 \
         numpy \
         pyproj \
+        python-dateutil \
         scipy && \
     pip3 install --no-cache-dir --no-deps git+https://github.com/smithb/pointCollection.git
 

@@ -18,3 +18,4 @@ Utilities for advecting point data for use in a Lagrangian reference frame
     :caption: User Guide
 
     user_guide/advection.rst
+    user_guide/time.rst

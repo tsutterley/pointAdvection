@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (04/2022)
+Written by Tyler Sutterley (05/2022)
 Routines for advecting ice parcels using velocity grids
 
 PYTHON DEPENDENCIES:
@@ -19,6 +19,7 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 05/2022: verify that input spatial coordinates are doubles
     Updated 04/2022: updated docstrings to numpy documentation format
     Updated 02/2022: converted to a python class using pointCollection
         added spline and regular grid interpolators
@@ -34,7 +35,7 @@ import copy
 import logging
 import numpy as np
 import scipy.interpolate
-from pointCollection.grid import data as griddata
+import pointCollection as pc
 
 class advection():
     """
@@ -86,8 +87,8 @@ class advection():
         kwargs.setdefault('method', 'bilinear')
         kwargs.setdefault('fill_value', np.nan)
         # set default class attributes
-        self.x=np.atleast_1d(kwargs['x']).astype('f')
-        self.y=np.atleast_1d(kwargs['y']).astype('f')
+        self.x=np.atleast_1d(kwargs['x']).astype('f8')
+        self.y=np.atleast_1d(kwargs['y']).astype('f8')
         self.t=kwargs['t']
         self.x0=None
         self.y0=None
@@ -149,14 +150,14 @@ class advection():
         xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
         ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
         # read input velocity file from geotiff
-        UV = griddata().from_geotif(self.filename,
+        UV = pc.grid.data().from_geotif(self.filename,
             bands=[1,2], bounds=[xlimits, ylimits])
         # check that there are points within the velocity file
         if not self.inside_polygon(self.x,self.y).any():
             raise ValueError('No points within ice velocity image')
         # return the input velocity field as new point collection object
         # use scale to convert from m/yr to m/s
-        self.grid = griddata().from_dict(dict(x=UV.x, y=UV.y,
+        self.grid = pc.grid.data().from_dict(dict(x=UV.x, y=UV.y,
             U=UV.z[:,:,0]*scale, V=UV.z[:,:,1]*scale))
         # copy projection from geotiff to output pc object
         self.grid.projection = copy.copy(UV.projection)
@@ -193,7 +194,7 @@ class advection():
         xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
         ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
         # read input velocity file from netCDF4
-        self.grid = griddata().from_nc(self.filename,
+        self.grid = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
             bounds=[xlimits, ylimits])
         # check that there are points within the velocity file
@@ -243,7 +244,7 @@ class advection():
         xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
         ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
         # read input velocity data from grid objects
-        self.grid = griddata().from_list(D_list, sort=sort)
+        self.grid = pc.grid.data().from_list(D_list, sort=sort)
         # crop grid data to bounds
         self.grid.crop(xlimits,ylimits)
         # check that there are points within the velocity file
@@ -779,11 +780,11 @@ class advection():
             # use scipy regular grid to interpolate values for a given method
             # will extrapolate velocities forward in time if outside range
             self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.y,self.grid.x,self.grid.t), self.grid.U,
-                method=kwargs['method'], bounds_error=False)
+                (self.grid.y,self.grid.x,self.grid.time), self.grid.U,
+                method=kwargs['method'], bounds_error=False, fill_value=None)
             self.interpolant['V'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.y,self.grid.x,self.grid.t), self.grid.V,
-                method=kwargs['method'], bounds_error=False)
+                (self.grid.y,self.grid.x,self.grid.time), self.grid.V,
+                method=kwargs['method'], bounds_error=False, fill_value=None)
         # calculate interpolated data
         U[v] = self.interpolant['U'].__call__(
             np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])

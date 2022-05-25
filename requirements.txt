@@ -1,7 +1,8 @@
-numpy
-scipy
-pyproj
+gdal
+h5py
 matplotlib
 netCDF4
-h5py
-gdal
+numpy
+pyproj
+python-dateutil
+scipy

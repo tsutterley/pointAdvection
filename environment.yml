@@ -3,14 +3,16 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.6
-  - notebook
-  - numpy
-  - scipy
-  - pyproj
+  - dateutil
+  - gdal
+  - h5py
   - matplotlib
   - netCDF4
-  - h5py
-  - gdal
+  - notebook
+  - numpy
+  - pyproj
+  - python-dateutil
+  - scipy
   - pip
   - pip:
      - git+https://github.com/tsutterley/pyTMD.git
