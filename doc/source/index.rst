@@ -9,6 +9,7 @@ Utilities for advecting point data for use in a Lagrangian reference frame
 
     getting_started/Install.rst
     getting_started/Contributing.rst
+    getting_started/Examples.rst
     getting_started/Resources.rst
     getting_started/Citations.rst
 
@@ -19,3 +20,4 @@ Utilities for advecting point data for use in a Lagrangian reference frame
 
     user_guide/advection.rst
     user_guide/time.rst
+    user_guide/tools.rst

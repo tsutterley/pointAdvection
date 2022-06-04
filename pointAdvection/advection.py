@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (05/2022)
+Written by Tyler Sutterley (06/2022)
 Routines for advecting ice parcels using velocity grids
 
 PYTHON DEPENDENCIES:
@@ -15,10 +15,14 @@ PYTHON DEPENDENCIES:
          https://unidata.github.io/netcdf4-python/netCDF4/index.html
     gdal: Pythonic interface to the Geospatial Data Abstraction Library (GDAL)
         https://pypi.python.org/pypi/GDAL/
+    matplotlib: Python 2D plotting library
+        http://matplotlib.org/
+        https://github.com/matplotlib/matplotlib
     pointCollection: Utilities for organizing and manipulating point data
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 06/2022: added velocity and streamline plot routine
     Updated 05/2022: verify that input spatial coordinates are doubles
     Updated 04/2022: updated docstrings to numpy documentation format
     Updated 02/2022: converted to a python class using pointCollection
@@ -36,6 +40,7 @@ import logging
 import numpy as np
 import scipy.interpolate
 import pointCollection as pc
+import matplotlib.pyplot as plt
 
 class advection():
     """
@@ -130,7 +135,8 @@ class advection():
         return self
 
     # PURPOSE: read geotiff velocity file and extract x and y velocities
-    def from_geotiff(self, filename, buffer=5e4, scale=1.0/31557600.0):
+    def from_geotiff(self, filename, bounds=None, buffer=5e4,
+        scale=1.0/31557600.0):
         """
         Read geotiff velocity file and extract x and y velocities
 
@@ -138,6 +144,9 @@ class advection():
         ----------
         filename: str
             geotiff velocity file
+        bounds: list or NoneType, default None
+            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
@@ -147,14 +156,11 @@ class advection():
         # find input geotiff velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
-        ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
+        if bounds is None:
+            bounds = self.buffered_bounds(buffer)
         # read input velocity file from geotiff
         UV = pc.grid.data().from_geotif(self.filename,
-            bands=[1,2], bounds=[xlimits, ylimits])
-        # check that there are points within the velocity file
-        if not self.inside_polygon(self.x,self.y).any():
-            raise ValueError('No points within ice velocity image')
+            bands=[1,2], bounds=bounds)
         # return the input velocity field as new point collection object
         # use scale to convert from m/yr to m/s
         self.grid = pc.grid.data().from_dict(dict(x=UV.x, y=UV.y,
@@ -170,7 +176,7 @@ class advection():
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
     def from_nc(self, filename, field_mapping=dict(U='VX', V='VY'),
-        group=None, buffer=5e4, scale=1.0/31557600.0):
+        group=None, bounds=None, buffer=5e4, scale=1.0/31557600.0):
         """
         Read netCDF4 velocity file and extract x and y velocities
 
@@ -180,8 +186,11 @@ class advection():
             netCDF4 velocity file
         field_mapping: dict, default {'U':'VX', 'V':'VY'}
             mapping between netCDF4 and output field variables
-        group: str or NoneType, default NOne
+        group: str or NoneType, default None
             netCDF4 group to extract variables
+        bounds: list or NoneType, default None
+            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
@@ -191,15 +200,12 @@ class advection():
         # find input netCDF4 velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
-        ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
+        if bounds is None:
+            bounds = self.buffered_bounds(buffer)
         # read input velocity file from netCDF4
         self.grid = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
-            bounds=[xlimits, ylimits])
-        # check that there are points within the velocity file
-        if not self.inside_polygon(self.x,self.y).any():
-            raise ValueError('No points within ice velocity image')
+            bounds=bounds)
         # swap orientation of axes
         setattr(self.grid, 'ndim', self.grid.U.ndim)
         if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
@@ -224,7 +230,8 @@ class advection():
         return self
 
     # PURPOSE: build a data object from a list of other data objects
-    def from_list(self, D_list, sort=False, buffer=5e4, scale=1.0/31557600.0):
+    def from_list(self, D_list, sort=False, bounds=None, buffer=5e4,
+        scale=1.0/31557600.0):
         """
         Build a data object from a list of other data objects
 
@@ -234,6 +241,9 @@ class advection():
             pointCollection grid objects
         sort: bool, default False
             sort the list of data objects before merging
+        bounds: list or NoneType, default None
+            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
@@ -241,15 +251,12 @@ class advection():
             defaults to converting from m/yr
         """
         # x and y limits (buffered maximum and minimum)
-        xlimits = [np.floor(self.x.min())-buffer, np.ceil(self.x.max())+buffer]
-        ylimits = [np.floor(self.y.min())-buffer, np.ceil(self.y.max())+buffer]
+        if bounds is None:
+            bounds = self.buffered_bounds(buffer)
         # read input velocity data from grid objects
         self.grid = pc.grid.data().from_list(D_list, sort=sort)
         # crop grid data to bounds
-        self.grid.crop(xlimits,ylimits)
-        # check that there are points within the velocity file
-        if not self.inside_polygon(self.x,self.y).any():
-            raise ValueError('No points within ice velocity image')
+        self.grid.crop(bounds[0],bounds[1])
         # swap orientation of axes
         setattr(self.grid, 'ndim', self.grid.U.ndim)
         if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
@@ -298,6 +305,9 @@ class advection():
         kwargs.setdefault('method', self.method)
         kwargs.setdefault('step', 1)
         kwargs.setdefault('t0', self.t0)
+        # check that there are points within the velocity file
+        if not self.inside_polygon(self.x,self.y).any():
+            raise ValueError('No points within ice velocity image')
         # update advection class attributes
         if (kwargs['integrator'] != self.integrator):
             self.integrator = copy.copy(kwargs['integrator'])
@@ -487,6 +497,14 @@ class advection():
         y6 = yi + (A[4,0]*v1 + A[4,1]*v2 + A[4,2]*v3 + A[4,3]*v4 + A[4,4]*v5)*dt
         u6, v6 = self.interpolate(x=x6, y=y6, t=kwargs['t'])
         return (np.array([u1,u2,u3,u4,u5,u6]), np.array([v1,v2,v3,v4,v5,v6]))
+
+    @property
+    def buffered_bounds(self, buffer=5e4):
+        xmin = np.floor(self.x.min()) - buffer
+        xmax = np.ceil(self.x.max()) + buffer
+        ymin = np.floor(self.y.min()) - buffer
+        ymax = np.ceil(self.y.max()) + buffer
+        return [[xmin,xmax], [ymin,ymax]]
 
     @property
     def distance(self):
@@ -794,3 +812,77 @@ class advection():
         U[np.isnan(U)] = kwargs['fill_value']
         V[np.isnan(V)] = kwargs['fill_value']
         return (U, V)
+
+    def imshow(self, band=None, ax=None, xy_scale=1.0, **kwargs):
+        """
+        Create plot of velocity magnitude
+
+        Parameters
+        ----------
+        band: int or NoneType, default None
+            band of velocity grid to show
+        ax: obj or NoneType, default None
+            matplotlib figure axis
+        xy_scale: float, default 1.0
+            Scaling factor for converting horizontal coordinates
+        **kwargs: dict
+            Keyword arguments for ``plt.imshow``
+
+        Returns
+        -------
+        im: obj
+            matplotlib ``AxesImage`` object
+        """
+        kwargs['extent'] = np.array(self.grid.extent)*xy_scale
+        kwargs['origin'] = 'lower'
+        if ax is None:
+            ax = plt.gca()
+        if band is None:
+            U = getattr(self.grid, 'U')
+            V = getattr(self.grid, 'V')
+        elif (band is not None):
+            U = getattr(self.grid, 'U')[:,:,band]
+            V = getattr(self.grid, 'V')[:,:,band]
+        # calculate speed
+        zz = np.sqrt(U**2 + V**2)
+        # create image plot of velocity magnitude
+        im = ax.imshow(zz, **kwargs)
+        # return the image
+        return im
+
+    def streamplot(self, band=None, ax=None, xy_scale=1.0, density=[0.5, 0.5], color='0.3', **kwargs):
+        """
+        Create stream plot of velocity vectors
+
+        Parameters
+        ----------
+        band: int or NoneType, default None
+            band of velocity grid to show
+        ax: obj or NoneType, default None
+            matplotlib figure axis
+        xy_scale: float, default 1.0
+            Scaling factor for converting horizontal coordinates
+        density: float, default [0.5, 0.5]
+            Closeness of streamlines
+        color: str, default '0.3'
+            Streamline color
+        **kwargs: dict
+            Keyword arguments for ``plt.streamplot``
+
+        Returns
+        -------
+        sp: obj
+            matplotlib ``StreamplotSet`` object
+        """
+        if ax is None:
+            ax = plt.gca()
+        if band is None:
+            U = getattr(self.grid, 'U')
+            V = getattr(self.grid, 'V')
+        elif (band is not None):
+            U = getattr(self.grid, 'U')[:,:,band]
+            V = getattr(self.grid, 'V')[:,:,band]
+        # add stream plot of velocity vectors
+        gridx,gridy = np.meshgrid(self.grid.x*xy_scale, self.grid.y*xy_scale)
+        sp = ax.streamplot(gridx, gridy, U, V, density=density, color=color, **kwargs)
+        return sp

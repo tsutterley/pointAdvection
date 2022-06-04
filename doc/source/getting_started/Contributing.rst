@@ -12,7 +12,7 @@ Ways to Contribute
 1) Fixing typographical or coding errors
 2) Submitting bug reports or feature requests through the use of `GitHub issues <https://github.com/tsutterley/pointAdvection/issues>`_
 3) Improving documentation and testing
-4) Sharing use cases and examples
+4) Sharing use cases and examples (such as `Jupyter Notebooks <./Examples.html>`_)
 5) Providing code for everyone to use
 
 Requesting a Feature
@@ -54,6 +54,11 @@ Steps to Contribute
 5) Make your changes on the new branch and add yourself to the list of `project contributors <./Citations.html#contributors>`_.
 6) Push your work to GitHub under your fork of the project.
 7) Submit a `Pull Request <https://github.com/tsutterley/pointAdvection/pulls>`_ from your forked branch to the project repository.
+
+Adding Examples
+^^^^^^^^^^^^^^^
+Examples may be in the form of executable scripts or interactive `Jupyter Notebooks <./Examples.html>`_.
+Fully working (but unrendered) examples should be submitted with the same steps as above.
 
 Semantic Commit Messages
 ^^^^^^^^^^^^^^^^^^^^^^^^
