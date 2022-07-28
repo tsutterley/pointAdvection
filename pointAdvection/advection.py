@@ -23,6 +23,7 @@ PYTHON DEPENDENCIES:
 
 UPDATE HISTORY:
     Updated 06/2022: added velocity and streamline plot routine
+        using numpy nan_to_num function to convert NaN values
     Updated 05/2022: verify that input spatial coordinates are doubles
     Updated 04/2022: updated docstrings to numpy documentation format
     Updated 02/2022: converted to a python class using pointCollection
@@ -546,8 +547,8 @@ class advection():
                 - ``False`` for points outside polygon
         """
         # create numpy arrays for 2D points
-        x = np.atleast_1d(self.x)
-        y = np.atleast_1d(self.y)
+        x = np.atleast_1d(x)
+        y = np.atleast_1d(y)
         nn = len(x)
         # create polygon with the extents of the image
         xmin,xmax,ymin,ymax = self.grid.extent
@@ -669,8 +670,8 @@ class advection():
         U[v] = (Ua*Wa + Ub*Wb + Uc*Wc + Ud*Wd)/W
         V[v] = (Va*Wa + Vb*Wb + Vc*Wc + Vd*Wd)/W
         # replace invalid values with fill value
-        U[np.isnan(U)] = kwargs['fill_value']
-        V[np.isnan(V)] = kwargs['fill_value']
+        U = np.nan_to_num(U, nan=kwargs['fill_value'])
+        V = np.nan_to_num(V, nan=kwargs['fill_value'])
         return (U, V)
 
     # PURPOSE: use biharmonic splines to interpolate velocities to coordinates
@@ -744,8 +745,8 @@ class advection():
         V[v] = self.interpolant['V'].ev(
             kwargs['x'][v],kwargs['y'][v]) + masked_values
         # replace invalid values with fill value
-        U[np.isnan(U)] = kwargs['fill_value']
-        V[np.isnan(V)] = kwargs['fill_value']
+        U = np.nan_to_num(U, nan=kwargs['fill_value'])
+        V = np.nan_to_num(V, nan=kwargs['fill_value'])
         return (U, V)
 
     # PURPOSE: use regular grid interpolation of velocities to coordinates
@@ -809,8 +810,8 @@ class advection():
         V[v] = self.interpolant['V'].__call__(
             np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
         # replace invalid values with fill value
-        U[np.isnan(U)] = kwargs['fill_value']
-        V[np.isnan(V)] = kwargs['fill_value']
+        U = np.nan_to_num(U, nan=kwargs['fill_value'])
+        V = np.nan_to_num(V, nan=kwargs['fill_value'])
         return (U, V)
 
     def imshow(self, band=None, ax=None, xy_scale=1.0, **kwargs):

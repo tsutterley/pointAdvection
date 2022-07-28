@@ -14,5 +14,4 @@ dependencies:
   - scipy
   - pip
   - pip:
-     - git+https://github.com/tsutterley/pyTMD.git
      - git+https://github.com/smithb/pointCollection.git

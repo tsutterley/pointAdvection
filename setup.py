@@ -19,8 +19,7 @@ long_description_content_type = "text/x-rst"
 with open('requirements.txt', encoding='utf8') as fh:
     install_requires = [line.split().pop(0) for line in fh.read().splitlines()]
 # dependency links
-dependency_links = ['https://github.com/tsutterley/pyTMD/tarball/main',
-    'https://github.com/smithb/pointCollection/tarball/tarball/main']
+dependency_links = ['https://github.com/smithb/pointCollection/tarball/tarball/main']
 
 # get version
 with open('version.txt', encoding='utf8') as fh:
