@@ -23,6 +23,5 @@ dependencies:
   - sphinx_rtd_theme
   - texlive-core
   - pip:
-    - git+https://github.com/tsutterley/pyTMD.git
     - git+https://github.com/smithb/pointCollection.git
     - ..
