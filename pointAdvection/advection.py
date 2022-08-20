@@ -219,8 +219,8 @@ class advection():
         # check if any grid values are nan
         mask |= np.isnan(self.grid.U.data) | np.isnan(self.grid.V.data)
         # use scale to convert from m/yr to m/s
-        self.grid.U *= scale
-        self.grid.V *= scale
+        self.grid.U = scale*np.array(self.grid.U, dtype=float)
+        self.grid.V = scale*np.array(self.grid.V, dtype=float)
         # update fill values in velocity grids
         self.grid.U[mask] = self.fill_value
         self.grid.V[mask] = self.fill_value
