@@ -222,7 +222,7 @@ def convert_calendar_dates(year, month, day, hour=0.0, minute=0.0, second=0.0,
     epoch1 = datetime.datetime(1858,11,17,0,0,0)
     epoch2 = datetime.datetime(*epoch)
     delta_time_epochs = (epoch2 - epoch1).total_seconds()
-    #-- return the date in days since epoch
+    #-- return the date in units since epoch
     return scale*np.array(MJD - delta_time_epochs/86400.0,dtype=np.float64)
 
 #-- PURPOSE: Converts from calendar dates into decimal years
