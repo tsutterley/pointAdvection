@@ -14,6 +14,11 @@ COMMAND LINE OPTIONS:
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
     -B X, --buffer X: Distance in kilometers to buffer extents
+    -I X, --interpolate X: Interpolation method
+        spline
+        linear
+        nearest
+        bilinear
     -V, --verbose: Verbose output of processing run
     -M X, --mode X: permissions mode of the output files
 
@@ -50,6 +55,7 @@ def mask_ice_fronts(base_dir, regions,
     mask_file=None,
     epoch=None,
     buffer=0,
+    method=None,
     mode=None):
 
     # dictionary of files for dates
@@ -105,7 +111,7 @@ def mask_ice_fronts(base_dir, regions,
     distance = 10
 
     # create advection object with interpolated velocities
-    kwargs = dict(integrator='RK4', method='bilinear')
+    kwargs = dict(integrator='RK4', method=method)
     adv = pointAdvection.advection(**kwargs).from_nc(
         velocity_file, bounds=[xlimits,ylimits],
         field_mapping=dict(U='vx', V='vy'), scale=scale)
@@ -253,6 +259,11 @@ def arguments():
     parser.add_argument('--buffer','-B',
         type=float, default=5.0,
         help='Distance in kilometers to buffer extents')
+    # interpolation method
+    parser.add_argument('--interpolate','-I',
+        metavar='METHOD', type=str, default='spline',
+        choices=('spline','linear','nearest','bilinear'),
+        help='Spatial interpolation method')
     # print information about processing run
     parser.add_argument('--verbose','-V',
         action='count', default=0,
@@ -281,7 +292,9 @@ def main():
         mask_ice_fronts(args.directory, args.region,
             velocity_file=args.velocity_file,
             mask_file=args.mask_file,
+            epoch=args.epoch,
             buffer=args.buffer,
+            method=args.interpolate,
             mode=args.mode)
     except Exception as e:
         # if there has been an error exception
