@@ -27,3 +27,10 @@ Utilities for advecting point data for use in a Lagrangian reference frame
     api_reference/advection.rst
     api_reference/time.rst
     api_reference/tools.rst
+
+.. toctree::
+    :maxdepth: 1
+    :hidden:
+    :caption: Use Cases
+
+    api_reference/mask_ice_fronts.rst

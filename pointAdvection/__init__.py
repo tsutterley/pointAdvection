@@ -13,3 +13,6 @@ Documentation is available at https://pointAdvection.readthedocs.io
 import pointAdvection.time
 import pointAdvection.tools
 from pointAdvection.advection import advection
+import pointAdvection.version
+# get version number
+__version__ = pointAdvection.version.version
