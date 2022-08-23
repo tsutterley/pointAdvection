@@ -195,6 +195,7 @@ def mask_ice_fronts(base_dir, regions,
             # update x and y coordinates
             adv.x = np.copy(adv.x0)
             adv.y = np.copy(adv.y0)
+            # rasterize advected points
             indx = ((adv.x0 - xmin)//dx).astype(int)
             indy = ((adv.y0 - ymin)//dy).astype(int)
             mask.z[indy, indx] = True
@@ -213,6 +214,7 @@ def mask_ice_fronts(base_dir, regions,
             # update x and y coordinates
             adv.x = np.copy(adv.x0)
             adv.y = np.copy(adv.y0)
+            # rasterize advected points
             indx = ((adv.x0 - xmin)//dx).astype(int)
             indy = ((adv.y0 - ymin)//dy).astype(int)
             mask.z[indy, indx] = False
