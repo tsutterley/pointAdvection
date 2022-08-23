@@ -131,14 +131,14 @@ def mask_ice_fronts(base_dir, regions,
     end_date = None
     # for each date in the list of files
     ice_front_dates = sorted(ice_front_files.keys())
-    for i,key in enumerate(ice_front_dates):
+    for i,date in enumerate(ice_front_dates):
         # only run if date with all regions
-        if len(ice_front_files[key]) < len(regions):
+        if len(ice_front_files[date]) < len(regions):
             continue
         # log date
-        logging.info(key)
+        logging.info(date)
         # extract information
-        YY1, MM1, DD1 = np.array(key.split('-'), dtype='f')
+        YY1, MM1, DD1 = np.array(date.split('-'), dtype='f')
         # get dates in J2000 seconds
         J2000 = pointAdvection.time.convert_calendar_dates(
             YY1, MM1, DD1, epoch=(2000,1,1,0,0,0), scale=86400.0)
@@ -156,7 +156,7 @@ def mask_ice_fronts(base_dir, regions,
         # convert polylines to points
         x = []
         y = []
-        for f in sorted(ice_front_files[key]):
+        for f in sorted(ice_front_files[date]):
             logging.info(os.path.basename(f))
             # read geopackage url and extract coordinates
             ds = fiona.open(os.path.join(directory, f))
@@ -221,7 +221,7 @@ def mask_ice_fronts(base_dir, regions,
 
         # write mask to file
         # use GDT_Byte as output data type
-        output_file = os.path.join(base_dir, f'icefront_{key}.tif')
+        output_file = os.path.join(base_dir, f'icefront_{date}.tif')
         mask.to_geotif(output_file, dtype=1, srs_wkt=crs.to_wkt())
         logging.info(output_file)
         # change the permissions mode of the output file
