@@ -13,6 +13,7 @@ COMMAND LINE OPTIONS:
     --velocity-file X: ice sheet velocity file
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
+    -Y X, --year X: Years of ice front data to run
     -B X, --buffer X: Distance in kilometers to buffer extents
     -I X, --interpolate X: Interpolation method
         spline
@@ -54,6 +55,7 @@ def mask_ice_fronts(base_dir, regions,
     velocity_file=None,
     mask_file=None,
     epoch=None,
+    years=None,
     buffer=0,
     method=None,
     mode=None):
@@ -62,13 +64,16 @@ def mask_ice_fronts(base_dir, regions,
     ice_front_files = {}
     # total bounds
     minx, miny, maxx, maxy = np.inf, np.inf, -np.inf, -np.inf
+    # regular expression pattern for finding files and
+    # extracting information from file names
+    regex_years = r'|'.join(f'{y:d}' for y in years) if years else r'\d+'
+    regex_pattern = r'(.*?)_({0})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
+    rx = re.compile(regex_pattern.format(regex_years), re.VERBOSE)
     # for each region to read
     for region in regions:
         # directory for region
         directory = os.path.join(base_dir, region, 'fronts')
-        # regular expression pattern for finding files and
-        # extracting information from file names
-        rx = re.compile(r'(.*?)_(\d{4})(\d{2})(\d{2})_(.*?)-(.*?).gpkg$')
+        # find regional files in directory
         files = sorted([f for f in os.listdir(directory) if rx.match(f)])
         for f in files:
             # extract information from file
@@ -150,8 +155,7 @@ def mask_ice_fronts(base_dir, regions,
             now = datetime.datetime.now()
             end_date = pointAdvection.time.convert_calendar_dates(
                 now.year, now.month, now.day,
-                epoch=(2000,1,1,0,0,0),
-                scale=86400.0)
+                epoch=(2000,1,1,0,0,0), scale=86400.0)
 
         # convert polylines to points
         x = []
@@ -185,28 +189,6 @@ def mask_ice_fronts(base_dir, regions,
         adv.x = np.copy(x)
         adv.y = np.copy(y)
         # run advection for each time step
-        # run backwards in time to find valid points
-        for t in np.arange(J2000, start_date, -step):
-            # update times
-            adv.t = np.copy(t)
-            adv.t0 = np.copy(t - step)
-            # run advection
-            adv.translate_parcel()
-            # update x and y coordinates
-            adv.x = np.copy(adv.x0)
-            adv.y = np.copy(adv.y0)
-            # rasterize advected points
-            indx = ((adv.x0 - xmin)//dx).astype(int)
-            indy = ((adv.y0 - ymin)//dy).astype(int)
-            valid = np.nonzero((adv.x0 >= xmin) & (adv.x0 <= xmax) &
-                (adv.y0 >= ymin) & (adv.y0 <= ymax))
-            indx, indy = indx[valid], indy[valid]
-            mask.z[indy, indx] = True
-
-        # reset original x and y coordinates
-        adv.x = np.copy(x)
-        adv.y = np.copy(y)
-        # run advection for each time step
         # run forward in time to find masked points
         for t in np.arange(J2000, end_date, step):
             # update times
@@ -217,13 +199,37 @@ def mask_ice_fronts(base_dir, regions,
             # update x and y coordinates
             adv.x = np.copy(adv.x0)
             adv.y = np.copy(adv.y0)
-            # rasterize advected points
-            indx = ((adv.x0 - xmin)//dx).astype(int)
-            indy = ((adv.y0 - ymin)//dy).astype(int)
+            # verify that the advected points are within domain
             valid = np.nonzero((adv.x0 >= xmin) & (adv.x0 <= xmax) &
                 (adv.y0 >= ymin) & (adv.y0 <= ymax))
-            indx, indy = indx[valid], indy[valid]
+            # rasterize advected points
+            indx = ((adv.x0[valid] - xmin)//dx).astype(int)
+            indy = ((adv.y0[valid] - ymin)//dy).astype(int)
+            # set mask
             mask.z[indy, indx] = False
+
+        # reset original x and y coordinates
+        adv.x = np.copy(x)
+        adv.y = np.copy(y)
+        # run advection for each time step
+        # run backwards in time to find valid points
+        for t in np.arange(J2000, start_date, -step):
+            # update times
+            adv.t = np.copy(t)
+            adv.t0 = np.copy(t - step)
+            # run advection
+            adv.translate_parcel()
+            # update x and y coordinates
+            adv.x = np.copy(adv.x0)
+            adv.y = np.copy(adv.y0)
+            # verify that the advected points are within domain
+            valid = np.nonzero((adv.x0 >= xmin) & (adv.x0 <= xmax) &
+                (adv.y0 >= ymin) & (adv.y0 <= ymax))
+            # rasterize advected points
+            indx = ((adv.x0[valid] - xmin)//dx).astype(int)
+            indy = ((adv.y0[valid] - ymin)//dy).astype(int)
+            # set mask
+            mask.z[indy, indx] = True
 
         # write mask to file
         # use GDT_Byte as output data type
@@ -232,8 +238,8 @@ def mask_ice_fronts(base_dir, regions,
         logging.info(output_file)
         # change the permissions mode of the output file
         os.chmod(output_file, mode=mode)
-        # update start of advection to improve computational times
-        start_date = np.copy(J2000)
+        # # update start of advection to improve computational times
+        # start_date = np.copy(J2000)
 
 # PURPOSE: create argument parser
 def arguments():
@@ -263,6 +269,10 @@ def arguments():
         type=int, default=(2014, 1, 1), nargs=3,
         metavar=('YEAR','MONTH','DAY'),
         help='Reference epoch of input mask')
+    # years of ice front data to run
+    parser.add_argument('--year','-Y',
+        type=int, nargs='+',
+        help='Years of ice front data to run')
     # extent buffer
     parser.add_argument('--buffer','-B',
         type=float, default=5.0,
@@ -301,6 +311,7 @@ def main():
             velocity_file=args.velocity_file,
             mask_file=args.mask_file,
             epoch=args.epoch,
+            years=args.year,
             buffer=args.buffer,
             method=args.interpolate,
             mode=args.mode)
