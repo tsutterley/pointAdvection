@@ -3,6 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.6
+  - fiona
   - gdal
   - h5py
   - matplotlib
@@ -12,6 +13,7 @@ dependencies:
   - pyproj
   - python-dateutil
   - scipy
+  - shapely
   - pip
   - pip:
      - git+https://github.com/smithb/pointCollection.git

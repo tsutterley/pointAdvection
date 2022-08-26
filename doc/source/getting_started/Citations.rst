@@ -45,6 +45,7 @@ Dependencies
 This software is also dependent on other commonly used Python packages:
 
 - `dateutil: powerful extensions to datetime <https://dateutil.readthedocs.io/en/stable/>`_
+- `fiona: Python wrapper for vector data access functions from the OGR library <https://fiona.readthedocs.io/en/latest/manual.html>`_
 - `gdal: Pythonic interface to the Geospatial Data Abstraction Library (GDAL) <https://pypi.python.org/pypi/GDAL>`_
 - `h5py: Python interface for Hierarchal Data Format 5 (HDF5) <http://h5py.org>`_
 - `matplotlib: Python 2D plotting library <https://matplotlib.org/>`_
@@ -52,6 +53,7 @@ This software is also dependent on other commonly used Python packages:
 - `numpy: Scientific Computing Tools For Python <https://numpy.org>`_
 - `pyproj: Python interface to PROJ library <https://pypi.org/project/pyproj/>`_
 - `scipy: Scientific Tools for Python <https://docs.scipy.org/doc//>`_
+- `shapely: PostGIS-ish operations outside a database context for Python <http://toblerity.org/shapely/index.html>`_
 
 Disclaimer
 ##########

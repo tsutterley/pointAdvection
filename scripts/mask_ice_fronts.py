@@ -29,17 +29,41 @@ UPDATE HISTORY:
 import sys
 import os
 import re
-import fiona
-import pyproj
 import logging
 import argparse
 import datetime
+import warnings
 import traceback
 import numpy as np
 import pointAdvection
 import pointAdvection.time
-import pointCollection as pc
-import shapely.geometry
+# attempt imports
+try:
+    import fiona
+except (ImportError, ModuleNotFoundError) as e:
+    warnings.filterwarnings("always")
+    warnings.warn("fiona not available")
+    warnings.warn("Some functions will throw an exception if called")
+try:
+    import pointCollection as pc
+except (ImportError, ModuleNotFoundError) as e:
+    warnings.filterwarnings("always")
+    warnings.warn("pointCollection not available")
+    warnings.warn("Some functions will throw an exception if called")
+try:
+    import pyproj
+except (ImportError, ModuleNotFoundError) as e:
+    warnings.filterwarnings("always")
+    warnings.warn("pyproj not available")
+    warnings.warn("Some functions will throw an exception if called")
+try:
+    import shapely.geometry
+except (ImportError, ModuleNotFoundError) as e:
+    warnings.filterwarnings("always")
+    warnings.warn("shapely not available")
+    warnings.warn("Some functions will throw an exception if called")
+# ignore warnings
+warnings.filterwarnings("ignore")
 
 # PURPOSE: keep track of threads
 def info(args):

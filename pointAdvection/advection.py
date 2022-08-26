@@ -38,10 +38,19 @@ import io
 import re
 import copy
 import logging
+import warnings
 import numpy as np
 import scipy.interpolate
-import pointCollection as pc
 import matplotlib.pyplot as plt
+# attempt imports
+try:
+    import pointCollection as pc
+except (ImportError, ModuleNotFoundError) as e:
+    warnings.filterwarnings("always")
+    warnings.warn("pointCollection not available")
+    warnings.warn("Some functions will throw an exception if called")
+# ignore warnings
+warnings.filterwarnings("ignore")
 
 class advection():
     """
