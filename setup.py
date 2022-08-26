@@ -25,6 +25,9 @@ dependency_links = ['https://github.com/smithb/pointCollection/tarball/tarball/m
 with open('version.txt', encoding='utf8') as fh:
     version = fh.read()
 
+# list of all scripts to be included with package
+scripts=[os.path.join('scripts',f) for f in os.listdir('scripts') if f.endswith('.py')]
+
 # run cmd from the command line
 def check_output(cmd):
     return subprocess.check_output(cmd).decode('utf')
@@ -73,4 +76,5 @@ setup(
     packages=find_packages(),
     install_requires=install_requires,
     dependency_links=dependency_links,
+    scripts=scripts
 )
