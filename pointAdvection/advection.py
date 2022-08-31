@@ -75,8 +75,10 @@ class advection():
         Final y-coordinate after advection
     t0: float, default 0.0
         Ending time for advection
-    grid: obj
-        pointCollection grid object of velocity fields
+    velocity: obj
+        ``pointCollection`` object of velocity fields
+
+        Can be type ``grid`` or ``mesh``
     filename: str
         input filename of velocity file
     integrator: str
@@ -91,10 +93,11 @@ class advection():
             - ``'bilinear'``: quick bilinear interpolation
             - ``'spline'``: scipy bivariate spline interpolation
             - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
+            - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
     interpolant: obj
         Interpolation function for velocity fields
     fill_value: float or NoneType, default np.nan
-        invalid value for spatial grid data
+        invalid value for output data
     """
     np.seterr(invalid='ignore')
     def __init__(self, **kwargs):
@@ -160,12 +163,14 @@ class advection():
         filename: str
             geotiff velocity file
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # find input geotiff velocity file
@@ -205,12 +210,14 @@ class advection():
         group: str or NoneType, default None
             netCDF4 group to extract variables
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # find input netCDF4 velocity file
@@ -255,16 +262,18 @@ class advection():
         Parameters
         ----------
         D_list: list
-            pointCollection grid objects
+            ``pointCollection`` grid objects
         sort: bool, default False
             sort the list of data objects before merging
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # x and y limits (buffered maximum and minimum)
@@ -312,6 +321,7 @@ class advection():
                 - ``'bilinear'``: quick bilinear interpolation
                 - ``'spline'``: scipy bivariate spline interpolation
                 - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
+                - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
         step: int or float, default 1
             Temporal step size in days
         t0: float, default 0.0
@@ -637,8 +647,8 @@ class advection():
             return self.spline_interpolation(**kwargs)
         elif (self.method in ('nearest','linear')):
             return self.regular_grid_interpolation(**kwargs)
-        elif (self.method in ('linearND',)):
-            return self.piecewise_linear_interpolation(**kwargs)
+        elif (self.method in ('nearestND','linearND')):
+            return self.unstructured_interpolation(**kwargs)
         else:
             raise ValueError('Invalid interpolation function')
 
@@ -840,11 +850,11 @@ class advection():
         V = np.nan_to_num(V, nan=kwargs['fill_value'])
         return (U, V)
 
-    # PURPOSE: use piecewise linear interpolation of velocities to coordinates
-    def piecewise_linear_interpolation(self, **kwargs):
+    # PURPOSE: use unstructured interpolation of velocities to coordinates
+    def unstructured_interpolation(self, **kwargs):
         """
-        Interpolate U and V velocities to coordinates using
-            N-dimensional piecewise linear interpolation
+        Interpolate unstructured U and V velocities to coordinates using
+            N-dimensional interpolation functions
 
         Parameters
         ----------
@@ -854,6 +864,15 @@ class advection():
             y-coordinates
         t: float or NoneType, default None
             time coordinates
+        method: str
+            Method of unstructured interpolation
+
+                - ``'nearestND'``
+                - ``'linearND'``
+        rescale: bool, default False
+            Rescale points to unit cube before performing interpolation
+        tree_options: dict or NoneType, default None
+            Options passed to underlying KDTree for ``nearestND``
         fill_value: float, default np.nan
             Invalid value
 
@@ -868,6 +887,9 @@ class advection():
         kwargs.setdefault('x', None)
         kwargs.setdefault('y', None)
         kwargs.setdefault('t', None)
+        kwargs.setdefault('method', None)
+        kwargs.setdefault('rescale', False)
+        kwargs.setdefault('tree_options', None)
         kwargs.setdefault('fill_value', self.fill_value)
         # output interpolated data
         U = np.full_like(kwargs['x'], np.nan)
@@ -887,15 +909,23 @@ class advection():
             # attempt to build delaunay triangulation
             attempt, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
+        # interpolator and keyword arguments for selected method
+        if (kwargs['method'] == 'nearestND'):
+            Interpolator = scipy.interpolate.NearestNDInterpolator
+            kwds = dict(rescale=kwargs['rescale'],
+                tree_options=kwargs['tree_options'])
+        elif (kwargs['method'] == 'linearND'):
+            Interpolator = scipy.interpolate.LinearNDInterpolator
+            kwds = dict(rescale=kwargs['rescale'], fill_value=np.nan)
+        else:
+            raise ValueError('Invalid interpolation function')
         # build interpolants for input velocity meshes
         if not self.interpolant and (self.velocity.ndim == 1):
             # build interpolants for time-invariant velocities
-            self.interpolant['U'] = scipy.interpolate.LinearNDInterpolator(
-                self.velocity.mesh, self.velocity.U,
-                fill_value=np.nan, rescale=False)
-            self.interpolant['V'] = scipy.interpolate.LinearNDInterpolator(
-                self.velocity.mesh, self.velocity.V,
-                fill_value=np.nan, rescale=False)
+            self.interpolant['U'] = Interpolator(
+                self.velocity.mesh, self.velocity.U, **kwds)
+            self.interpolant['V'] = Interpolator(
+                self.velocity.mesh, self.velocity.V, **kwds)
         elif not self.interpolant:
             # build interpolants for time-variable velocities
             nt = len(self.velocity.time)
@@ -906,20 +936,19 @@ class advection():
                 self.velocity.time, np.arange(nt), kind='linear')
             # create interpolants for each time point
             for i,t in enumerate(self.velocity.time):
-                self.interpolant['U'][i] = scipy.interpolate.LinearNDInterpolator(
-                    self.velocity.mesh, self.velocity.U[:,t],
-                    fill_value=np.nan, rescale=False)
-                self.interpolant['V'][i] = scipy.interpolate.LinearNDInterpolator(
-                    self.velocity.mesh, self.velocity.V[:,t],
-                    fill_value=np.nan, rescale=False)
-
+                self.interpolant['U'][i] = Interpolator(
+                    self.velocity.mesh, self.velocity.U[:,t], **kwds)
+                self.interpolant['V'][i] = Interpolator(
+                    self.velocity.mesh, self.velocity.V[:,t], **kwds)
         # evaluate at points
         if (self.velocity.ndim == 1):
+            # evalulate using invariant velocities
             U[v] = self.interpolant['U'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
             V[v] = self.interpolant['V'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
         else:
+            # evalulate using time-variable velocities
             # find indices for linearly interpolating in time
             times = np.ones_like(kwargs['x'])*kwargs['t']
             indices = self.interpolant['time'].__call__(times).astype(int)
