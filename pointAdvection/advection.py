@@ -883,35 +883,35 @@ class advection():
         if not np.any(valid):
             return (U, V)
         # build delaunay triangulations for input mesh coordinates
-        if not self.interpolant:
+        if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.interpolant['mesh'] = self.find_valid_triangulation(
+            attempt, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
-            # build interpolants
-            if (self.velocity.ndim == 1):
-                # build interpolants for time-invariant velocities
-                self.interpolant['U'] = scipy.interpolate.LinearNDInterpolator(
-                    self.interpolant['mesh'], self.velocity.U,
+        # build interpolants for input velocity meshes
+        if not self.interpolant and (self.velocity.ndim == 1):
+            # build interpolants for time-invariant velocities
+            self.interpolant['U'] = scipy.interpolate.LinearNDInterpolator(
+                self.velocity.mesh, self.velocity.U,
+                fill_value=np.nan, rescale=False)
+            self.interpolant['V'] = scipy.interpolate.LinearNDInterpolator(
+                self.velocity.mesh, self.velocity.V,
+                fill_value=np.nan, rescale=False)
+        elif not self.interpolant:
+            # build interpolants for time-variable velocities
+            nt = len(self.velocity.time)
+            self.interpolant['U'] = nt*[None]
+            self.interpolant['V'] = nt*[None]
+            # create 1-d interpolant through time
+            self.interpolant['time'] = scipy.interpolate.interp1d(
+                self.velocity.time, np.arange(nt), kind='linear')
+            # create interpolants for each time point
+            for i,t in enumerate(self.velocity.time):
+                self.interpolant['U'][i] = scipy.interpolate.LinearNDInterpolator(
+                    self.velocity.mesh, self.velocity.U[:,t],
                     fill_value=np.nan, rescale=False)
-                self.interpolant['V'] = scipy.interpolate.LinearNDInterpolator(
-                    self.interpolant['mesh'], self.velocity.V,
+                self.interpolant['V'][i] = scipy.interpolate.LinearNDInterpolator(
+                    self.velocity.mesh, self.velocity.V[:,t],
                     fill_value=np.nan, rescale=False)
-            else:
-                # build interpolants for time-variable velocities
-                nt = len(self.velocity.time)
-                self.interpolant['U'] = nt*[None]
-                self.interpolant['V'] = nt*[None]
-                # create 1-d interpolant through time
-                self.interpolant['time'] = scipy.interpolate.interp1d(
-                    self.velocity.time, np.arange(nt), kind='linear')
-                # create interpolants for each time point
-                for i,t in enumerate(self.velocity.time):
-                    self.interpolant['U'][i] = scipy.interpolate.LinearNDInterpolator(
-                        self.interpolant['mesh'], self.velocity.U[:,t],
-                        fill_value=np.nan, rescale=False)
-                    self.interpolant['V'][i] = scipy.interpolate.LinearNDInterpolator(
-                        self.interpolant['mesh'], self.velocity.V[:,t],
-                        fill_value=np.nan, rescale=False)
 
         # evaluate at points
         if (self.velocity.ndim == 1):
@@ -1086,13 +1086,13 @@ class advection():
         if ax is None:
             ax = plt.gca()
         # get delaunay triangulation
-        if 'mesh' not in self.interpolant.keys():
+        if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.interpolant['mesh'] = self.find_valid_triangulation(
+            attempt, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
         # build matplotlib triangulation object
         triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
-            self.interpolant['mesh'].vertices)
+            self.velocity.mesh.vertices)
         # create triangle plot of velocity magnitude
         tri = ax.triplot(triangle, **kwargs)
         # return the triangle plot
@@ -1127,13 +1127,13 @@ class advection():
         # calculate speed
         zz = np.sqrt(U**2 + V**2)
         # get delaunay triangulation
-        if 'mesh' not in self.interpolant.keys():
+        if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.interpolant['mesh'] = self.find_valid_triangulation(
+            attempt, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
         # build matplotlib triangulation object
         triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
-            self.interpolant['mesh'].vertices)
+            self.velocity.mesh.vertices)
         # create triangle plot of velocity magnitude
         tri = ax.tricontourf(triangle, zz, **kwargs)
         # return the triangle plot
