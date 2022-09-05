@@ -3,7 +3,7 @@
 """
 advection.py
 Written by Tyler Sutterley (08/2022)
-Routines for advecting ice parcels using velocity grids
+Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
     numpy: Scientific Computing Tools For Python
@@ -59,7 +59,7 @@ warnings.filterwarnings("ignore")
 
 class advection():
     """
-    Data class for advecting ice parcels using velocity grids
+    Data class for advecting ice parcels using velocity estimates
 
     Attributes
     ----------
@@ -230,7 +230,7 @@ class advection():
             field_mapping=field_mapping, group=group,
             bounds=bounds)
         # swap orientation of axes
-        setattr(self.velocity, 'ndim', self.grid.U.ndim)
+        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
@@ -300,6 +300,7 @@ class advection():
         dx = self.velocity.x[1] - self.velocity.x[0]
         dy = self.velocity.y[1] - self.velocity.y[0]
         setattr(self.velocity, 'spacing', (dx, dy))
+        setattr(self.velocity, 'type', 'grid')
         return self
 
     # PURPOSE: translate a parcel between two times using an advection function
@@ -1134,7 +1135,7 @@ class advection():
         Parameters
         ----------
         band: int or NoneType, default None
-            band of velocity grid to show
+            band of velocity mesh to show
         ax: obj or NoneType, default None
             matplotlib figure axis
         **kwargs: dict
