@@ -526,8 +526,10 @@ class advection():
         u6, v6 = self.interpolate(x=x6, y=y6, t=kwargs['t'])
         return (np.array([u1,u2,u3,u4,u5,u6]), np.array([v1,v2,v3,v4,v5,v6]))
 
-    @property
     def buffered_bounds(self, buffer=5e4):
+        """
+        Calculates the bounding box including a buffer distance
+        """
         xmin = np.floor(self.x.min()) - buffer
         xmax = np.ceil(self.x.max()) + buffer
         ymin = np.floor(self.y.min()) - buffer
