@@ -903,7 +903,6 @@ class advection():
         valid &= np.isfinite(kwargs['x'])
         valid &= np.isfinite(kwargs['y'])
         valid &= self.inside_polygon(kwargs['x'], kwargs['y'])
-        v, = np.nonzero(valid)
         # check that there are indice values
         if not np.any(valid):
             return (U, V)
@@ -912,6 +911,9 @@ class advection():
             # attempt to build delaunay triangulation
             attempt, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
+        # reduce to points within the convex hull of the triangulation
+        valid &= self.inside_simplex(kwargs['x'], kwargs['y'])
+        v, = np.nonzero(valid)
         # interpolator and keyword arguments for selected method
         if (kwargs['method'] == 'nearestND'):
             Interpolator = scipy.interpolate.NearestNDInterpolator
@@ -923,26 +925,17 @@ class advection():
         else:
             raise ValueError('Invalid interpolation function')
         # build interpolants for input velocity meshes
-        if not self.interpolant and (self.velocity.ndim == 1):
-            # build interpolants for time-invariant velocities
+        if not self.interpolant:
             self.interpolant['U'] = Interpolator(
                 self.velocity.mesh, self.velocity.U, **kwds)
             self.interpolant['V'] = Interpolator(
                 self.velocity.mesh, self.velocity.V, **kwds)
-        elif not self.interpolant:
+        if not self.interpolant and (self.velocity.ndim > 1):
             # build interpolants for time-variable velocities
             nt = len(self.velocity.time)
-            self.interpolant['U'] = nt*[None]
-            self.interpolant['V'] = nt*[None]
             # create 1-d interpolant through time
             self.interpolant['time'] = scipy.interpolate.interp1d(
                 self.velocity.time, np.arange(nt), kind='linear')
-            # create interpolants for each time point
-            for i,t in enumerate(self.velocity.time):
-                self.interpolant['U'][i] = Interpolator(
-                    self.velocity.mesh, self.velocity.U[:,t], **kwds)
-                self.interpolant['V'][i] = Interpolator(
-                    self.velocity.mesh, self.velocity.V[:,t], **kwds)
         # evaluate at points
         if (self.velocity.ndim == 1):
             # evalulate using invariant velocities
@@ -952,30 +945,27 @@ class advection():
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
         else:
             # evalulate using time-variable velocities
-            # find indices for linearly interpolating in time
+            UT = self.interpolant['U'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+            VT = self.interpolant['V'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+            # linearly interpolate in time
             times = np.ones_like(kwargs['x'])*kwargs['t']
-            indices = self.interpolant['time'].__call__(times).astype(int)
+            indices = self.interpolant['time'].__call__(times[v]).astype(int)
             # clip indices to valid range for temporal interpolation
             indices = np.clip(indices, 0, nt-1)
-            # iterate over unique indices and linearly interpolate to time
             for tstep in np.unique(indices):
                 # find valid points
-                vi, = np.nonzero((indices == tstep) and valid)
+                vi, = np.nonzero((indices == tstep) & valid)
                 # check that there are indice values (0 is falsy)
                 if not np.any(vi) and not np.any(vi == 0):
                     continue
                 # calculate weights for linearly interpolating in time
                 weight = (times[vi] - self.velocity.time[tstep]) / \
                     (self.velocity.time[tstep+1] - self.velocity.time[tstep])
-                # interpolated velocities for times before and after time step
-                points = np.c_[kwargs['x'][vi], kwargs['y'][vi]]
-                U1 = self.interpolant['U'][tstep].__call__(points)
-                U2 = self.interpolant['U'][tstep+1].__call__(points)
-                V1 = self.interpolant['V'][tstep].__call__(points)
-                V2 = self.interpolant['V'][tstep+1].__call__(points)
                 # linearly interpolate in time
-                U[vi] = (1.0 - weight)*U1 + weight*U2
-                V[vi] = (1.0 - weight)*V1 + weight*V2
+                U[vi] = (1.0 - weight)*UT[vi,tstep] + weight*UT[vi,tstep+1]
+                V[vi] = (1.0 - weight)*VT[vi,tstep] + weight*VT[vi,tstep+1]
         # replace invalid values with fill value
         U = np.nan_to_num(U, nan=kwargs['fill_value'])
         V = np.nan_to_num(V, nan=kwargs['fill_value'])
@@ -1028,6 +1018,32 @@ class advection():
                 return (i+1, triangle)
         # raise exception if still finding errors
         raise scipy.spatial.qhull.QhullError
+
+    # PURPOSE: check a specified 2D point is inside the convex hull of a mesh
+    def inside_simplex(self, x, y):
+        """
+        Indicates whether a specified 2D point is inside the convex hull of a mesh
+
+        Parameters
+        ----------
+        x: float
+            x-coordinates to query
+        y: float
+            y-coordinates to query
+
+        Returns
+        -------
+        flag: bool
+            Flag specifying if point is within convex hull
+
+                - ``True`` for points within convex hull
+                - ``False`` for points outside convex hull
+        """
+        # only run if velocity mesh has a find simplex attribute
+        if hasattr(self.velocity.mesh, 'find_simplex'):
+            return (self.velocity.mesh.find_simplex(np.c_[x, y]) >= 0)
+        else:
+            raise AttributeError("Convex hull cannot be found for mesh")
 
     # PURPOSE: calculates the maximum angle within a triangle given the
     # coordinates of the triangles vertices A(x,y), B(x,y), C(x,y)
