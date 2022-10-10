@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (06/2022)
-Routines for advecting ice parcels using velocity grids
+Written by Tyler Sutterley (10/2022)
+Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
     numpy: Scientific Computing Tools For Python
@@ -22,6 +22,11 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 10/2022: added option to plot divergence of velocity field
+        added sreaklines based on a velocity field
+    Updated 08/2022: verify datatype of imported velocity fields
+        add interpolation and plot routines for unstructured meshes
+        place some imports within try/except statements
     Updated 06/2022: added velocity and streamline plot routine
         using numpy nan_to_num function to convert NaN values
     Updated 05/2022: verify that input spatial coordinates are doubles
@@ -41,7 +46,9 @@ import logging
 import warnings
 import numpy as np
 import scipy.interpolate
+import scipy.spatial
 import matplotlib.pyplot as plt
+import matplotlib.tri as mtri
 # attempt imports
 try:
     import pointCollection as pc
@@ -54,7 +61,7 @@ warnings.filterwarnings("ignore")
 
 class advection():
     """
-    Data class for advecting ice parcels using velocity grids
+    Data class for advecting ice parcels using velocity estimates
 
     Attributes
     ----------
@@ -70,11 +77,13 @@ class advection():
         Final y-coordinate after advection
     t0: float, default 0.0
         Ending time for advection
+    velocity: obj
+        ``pointCollection`` object of velocity fields
+
+        Can be type ``grid`` or ``mesh``
     streak: dict
-        path traversed during advection (set kwarg 'streak' to true 
+        path traversed during advection (set kwarg 'streak' to true
                         in translate methods to enable)
-    grid: obj
-        pointCollection grid object of velocity fields
     filename: str
         input filename of velocity file
     integrator: str
@@ -89,10 +98,11 @@ class advection():
             - ``'bilinear'``: quick bilinear interpolation
             - ``'spline'``: scipy bivariate spline interpolation
             - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
+            - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
     interpolant: obj
         Interpolation function for velocity fields
     fill_value: float or NoneType, default np.nan
-        invalid value for spatial grid data
+        invalid value for output data
     """
     np.seterr(invalid='ignore')
     def __init__(self, **kwargs):
@@ -111,23 +121,23 @@ class advection():
         self.x0=None
         self.y0=None
         self.t0=kwargs['t0']
+        self.velocity=None
         self.streak={'x':[], 'y':[],'t':[]}
-        self.grid=None
         self.filename=None
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
         self.fill_value=kwargs['fill_value']
-        
+
     def __update_streak__(self, t, **kwargs):
         """
-        Update the streakline during flow tracing.  
+        Update the streakline during flow tracing.
         """
         if kwargs['streak']:
             self.streak['x'] += [self.x0.copy()]
             self.streak['y'] += [self.y0.copy()]
             self.streak['t'] += [t.copy()]
-        
+
     def case_insensitive_filename(self, filename):
         """
         Searches a directory for a filename without case dependence
@@ -156,7 +166,7 @@ class advection():
         # print filename
         logging.debug(self.filename)
         return self
-    
+
     # PURPOSE: read geotiff velocity file and extract x and y velocities
     def from_geotiff(self, filename, bounds=None, buffer=5e4,
         scale=1.0/31557600.0):
@@ -168,12 +178,14 @@ class advection():
         filename: str
             geotiff velocity file
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # find input geotiff velocity file
@@ -186,15 +198,16 @@ class advection():
             bands=[1,2], bounds=bounds)
         # return the input velocity field as new point collection object
         # use scale to convert from m/yr to m/s
-        self.grid = pc.grid.data().from_dict(dict(x=UV.x, y=UV.y,
+        self.velocity = pc.grid.data().from_dict(dict(x=UV.x, y=UV.y,
             U=UV.z[:,:,0]*scale, V=UV.z[:,:,1]*scale))
         # copy projection from geotiff to output pc object
-        self.grid.projection = copy.copy(UV.projection)
+        self.velocity.projection = copy.copy(UV.projection)
         # set the spacing and dimensions of grid
-        dx = self.grid.x[1] - self.grid.x[0]
-        dy = self.grid.y[1] - self.grid.y[0]
-        setattr(self.grid, 'spacing', (dx, dy))
-        setattr(self.grid, 'ndim', self.grid.U.ndim)
+        dx = self.velocity.x[1] - self.velocity.x[0]
+        dy = self.velocity.y[1] - self.velocity.y[0]
+        setattr(self.velocity, 'spacing', (dx, dy))
+        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        setattr(self.velocity, 'type', 'grid')
         return self
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
@@ -212,12 +225,14 @@ class advection():
         group: str or NoneType, default None
             netCDF4 group to extract variables
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # find input netCDF4 velocity file
@@ -226,30 +241,31 @@ class advection():
         if bounds is None:
             bounds = self.buffered_bounds(buffer)
         # read input velocity file from netCDF4
-        self.grid = pc.grid.data().from_nc(self.filename,
+        self.velocity = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
             bounds=bounds)
         # swap orientation of axes
-        setattr(self.grid, 'ndim', self.grid.U.ndim)
-        if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
-            self.grid.U = np.transpose(self.grid.U, axes=(1,2,0))
-            self.grid.V = np.transpose(self.grid.V, axes=(1,2,0))
-            self.grid.t_axis = 2
+        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
+            self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
+            self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
+            self.velocity.t_axis = 2
         # create mask for invalid velocity points
-        mask = ((self.grid.U.data == self.grid.fill_value) & \
-            (self.grid.V.data == self.grid.fill_value))
+        mask = ((self.velocity.U.data == self.velocity.fill_value) & \
+            (self.velocity.V.data == self.velocity.fill_value))
         # check if any grid values are nan
-        mask |= np.isnan(self.grid.U.data) | np.isnan(self.grid.V.data)
+        mask |= np.isnan(self.velocity.U.data) | np.isnan(self.velocity.V.data)
         # use scale to convert from m/yr to m/s
-        self.grid.U = scale*np.array(self.grid.U, dtype=float)
-        self.grid.V = scale*np.array(self.grid.V, dtype=float)
+        self.velocity.U = scale*np.array(self.velocity.U, dtype=float)
+        self.velocity.V = scale*np.array(self.velocity.V, dtype=float)
         # update fill values in velocity grids
-        self.grid.U[mask] = self.fill_value
-        self.grid.V[mask] = self.fill_value
+        self.velocity.U[mask] = self.fill_value
+        self.velocity.V[mask] = self.fill_value
         # set the spacing of grid
-        dx = self.grid.x[1] - self.grid.x[0]
-        dy = self.grid.y[1] - self.grid.y[0]
-        setattr(self.grid, 'spacing', (dx, dy))
+        dx = self.velocity.x[1] - self.velocity.x[0]
+        dy = self.velocity.y[1] - self.velocity.y[0]
+        setattr(self.velocity, 'spacing', (dx, dy))
+        setattr(self.velocity, 'type', 'grid')
         return self
 
     # PURPOSE: build a data object from a list of other data objects
@@ -261,42 +277,45 @@ class advection():
         Parameters
         ----------
         D_list: list
-            pointCollection grid objects
+            ``pointCollection`` grid objects
         sort: bool, default False
             sort the list of data objects before merging
         bounds: list or NoneType, default None
-            boundaries to read, [[xmin, xmax], [ymin, ymax]].
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
             If not specified, read around input points
         buffer: float, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
+
             defaults to converting from m/yr
         """
         # x and y limits (buffered maximum and minimum)
         if bounds is None:
             bounds = self.buffered_bounds(buffer)
         # read input velocity data from grid objects
-        self.grid = pc.grid.data().from_list(D_list, sort=sort)
+        self.velocity = pc.grid.data().from_list(D_list, sort=sort)
         # crop grid data to bounds
-        self.grid.crop(bounds[0],bounds[1])
+        self.velocity.crop(bounds[0],bounds[1])
         # swap orientation of axes
-        setattr(self.grid, 'ndim', self.grid.U.ndim)
-        if (self.grid.t_axis == 0) and (self.grid.ndim == 3):
-            self.grid.U = np.transpose(self.grid.U, axes=(1,2,0))
-            self.grid.V = np.transpose(self.grid.V, axes=(1,2,0))
-            self.grid.t_axis = 2
+        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
+            self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
+            self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
+            self.velocity.t_axis = 2
         # use scale to convert from m/yr to m/s
-        self.grid.U *= scale
-        self.grid.V *= scale
+        self.velocity.U *= scale
+        self.velocity.V *= scale
         # update fill values in velocity grids
-        mask = np.isnan(self.grid.U) | np.isnan(self.grid.V)
-        self.grid.U[mask] = self.fill_value
-        self.grid.V[mask] = self.fill_value
+        mask = np.isnan(self.velocity.U) | np.isnan(self.velocity.V)
+        self.velocity.U[mask] = self.fill_value
+        self.velocity.V[mask] = self.fill_value
         # set the spacing of grid
-        dx = self.grid.x[1] - self.grid.x[0]
-        dy = self.grid.y[1] - self.grid.y[0]
-        setattr(self.grid, 'spacing', (dx, dy))
+        dx = self.velocity.x[1] - self.velocity.x[0]
+        dy = self.velocity.y[1] - self.velocity.y[0]
+        setattr(self.velocity, 'spacing', (dx, dy))
+        setattr(self.velocity, 'type', 'grid')
         return self
 
     # PURPOSE: translate a parcel between two times using an advection function
@@ -318,6 +337,7 @@ class advection():
                 - ``'bilinear'``: quick bilinear interpolation
                 - ``'spline'``: scipy bivariate spline interpolation
                 - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
+                - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
         step: int or float, default 1
             Temporal step size in days
         t0: float, default 0.0
@@ -385,7 +405,7 @@ class advection():
         # keep track of time for 3-dimensional interpolations
         t = np.copy(self.t)
         self.__update_streak__(t, **kwargs)
-        for i in range(kwargs['N']):           
+        for i in range(kwargs['N']):
             u1, v1 = self.interpolate(x=self.x0, y=self.y0, t=t)
             self.x0 += u1*dt
             self.y0 += v1*dt
@@ -458,7 +478,7 @@ class advection():
         self.x0 = np.copy(self.x)
         self.y0 = np.copy(self.y)
         self.__update_streak__(self.t, **kwargs)
-        
+
         # while the difference (sigma) is greater than the tolerance
         while (sigma > tolerance) or np.isnan(sigma):
             # translate parcel from time 1 to time 2 at time step
@@ -534,8 +554,10 @@ class advection():
         u6, v6 = self.interpolate(x=x6, y=y6, t=kwargs['t'])
         return (np.array([u1,u2,u3,u4,u5,u6]), np.array([v1,v2,v3,v4,v5,v6]))
 
-    @property
     def buffered_bounds(self, buffer=5e4):
+        """
+        Calculates the bounding box including a buffer distance
+        """
         xmin = np.floor(self.x.min()) - buffer
         xmax = np.ceil(self.x.max()) + buffer
         ymin = np.floor(self.y.min()) - buffer
@@ -585,10 +607,18 @@ class advection():
         x = np.atleast_1d(x)
         y = np.atleast_1d(y)
         nn = len(x)
-        # create polygon with the extents of the image
-        xmin,xmax,ymin,ymax = self.grid.extent
-        xpts = np.array([xmin, xmax, xmax, xmin, xmin])
-        ypts = np.array([ymin, ymin, ymax, ymax, ymin])
+        # get points for polygon
+        if (self.velocity.type == 'grid'):
+            # create polygon with the extents of the image
+            xmin,xmax,ymin,ymax = self.velocity.extent
+            xpts = np.array([xmin, xmax, xmax, xmin, xmin])
+            ypts = np.array([ymin, ymin, ymax, ymax, ymin])
+        elif (self.velocity.type == 'mesh'):
+            # create polygon with convex hull of points
+            points = np.c_[self.velocity.x, self.velocity.y]
+            hull = scipy.spatial.ConvexHull(points)
+            xpts = points[hull.vertices, 0]
+            ypts = points[hull.vertices, 1]
         # check dimensions of polygon points
         if (xpts.ndim != 1):
             raise ValueError('X coordinates of polygon not a vector.')
@@ -648,6 +678,8 @@ class advection():
             return self.spline_interpolation(**kwargs)
         elif (self.method in ('nearest','linear')):
             return self.regular_grid_interpolation(**kwargs)
+        elif (self.method in ('nearestND','linearND')):
+            return self.unstructured_interpolation(**kwargs)
         else:
             raise ValueError('Invalid interpolation function')
 
@@ -687,20 +719,20 @@ class advection():
         if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # calculating indices for original grid
-        xmin,xmax,ymin,ymax = self.grid.extent
-        ii = np.floor((kwargs['x'][v]-xmin)/self.grid.spacing[0]).astype('i')
-        jj = np.floor((kwargs['y'][v]-ymin)/self.grid.spacing[1]).astype('i')
+        xmin,xmax,ymin,ymax = self.velocity.extent
+        ii = np.floor((kwargs['x'][v]-xmin)/self.velocity.spacing[0]).astype('i')
+        jj = np.floor((kwargs['y'][v]-ymin)/self.velocity.spacing[1]).astype('i')
         # weight arrays
-        Wa = ((kwargs['x'][v]-self.grid.x[ii])*(kwargs['y'][v]-self.grid.y[jj]))
-        Wb = ((self.grid.x[ii+1]-kwargs['x'][v])*(kwargs['y'][v]-self.grid.y[jj]))
-        Wc = ((kwargs['x'][v]-self.grid.x[ii])*(self.grid.y[jj+1]-kwargs['y'][v]))
-        Wd = ((self.grid.x[ii+1]-kwargs['x'][v])*(self.grid.y[jj+1]-kwargs['y'][v]))
-        W = ((self.grid.x[ii+1]-self.grid.x[ii])*(self.grid.y[jj+1]-self.grid.y[jj]))
+        Wa = ((kwargs['x'][v]-self.velocity.x[ii])*(kwargs['y'][v]-self.velocity.y[jj]))
+        Wb = ((self.velocity.x[ii+1]-kwargs['x'][v])*(kwargs['y'][v]-self.velocity.y[jj]))
+        Wc = ((kwargs['x'][v]-self.velocity.x[ii])*(self.velocity.y[jj+1]-kwargs['y'][v]))
+        Wd = ((self.velocity.x[ii+1]-kwargs['x'][v])*(self.velocity.y[jj+1]-kwargs['y'][v]))
+        W = ((self.velocity.x[ii+1]-self.velocity.x[ii])*(self.velocity.y[jj+1]-self.velocity.y[jj]))
         # data at indices
-        Ua,Va = (self.grid.U[jj,ii], self.grid.V[jj,ii])
-        Ub,Vb = (self.grid.U[jj+1,ii], self.grid.V[jj+1,ii])
-        Uc,Vc = (self.grid.U[jj,ii+1], self.grid.V[jj,ii+1])
-        Ud,Vd = (self.grid.U[jj+1,ii+1],self.grid.V[jj+1,ii+1])
+        Ua,Va = (self.velocity.U[jj,ii], self.velocity.V[jj,ii])
+        Ub,Vb = (self.velocity.U[jj+1,ii], self.velocity.V[jj+1,ii])
+        Uc,Vc = (self.velocity.U[jj,ii+1], self.velocity.V[jj,ii+1])
+        Ud,Vd = (self.velocity.U[jj+1,ii+1],self.velocity.V[jj+1,ii+1])
         # calculate bilinear interpolated data
         U[v] = (Ua*Wa + Ub*Wb + Uc*Wc + Ud*Wd)/W
         V[v] = (Va*Wa + Vb*Wb + Vc*Wc + Vd*Wd)/W
@@ -751,24 +783,24 @@ class advection():
         if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # create mask for invalid values
-        indy,indx = np.nonzero((self.grid.U == self.fill_value) |
-            (self.grid.V == self.fill_value) |
-            (np.isnan(self.grid.U)) | (np.isnan(self.grid.V)))
-        self.grid.U[indy,indx] = 0.0
-        self.grid.V[indy,indx] = 0.0
-        mask = np.zeros((self.grid.shape))
+        indy,indx = np.nonzero((self.velocity.U == self.fill_value) |
+            (self.velocity.V == self.fill_value) |
+            (np.isnan(self.velocity.U)) | (np.isnan(self.velocity.V)))
+        self.velocity.U[indy,indx] = 0.0
+        self.velocity.V[indy,indx] = 0.0
+        mask = np.zeros((self.velocity.shape))
         mask[indy,indx] = 1.0
         # build spline interpolants for input grid
         if not self.interpolant:
             # use scipy bivariate splines to interpolate values
             self.interpolant['U'] = scipy.interpolate.RectBivariateSpline(
-                self.grid.x, self.grid.y, self.grid.U.T,
+                self.velocity.x, self.velocity.y, self.velocity.U.T,
                 kx=kwargs['kx'], ky=kwargs['ky'])
             self.interpolant['V'] = scipy.interpolate.RectBivariateSpline(
-                self.grid.x, self.grid.y, self.grid.V.T,
+                self.velocity.x, self.velocity.y, self.velocity.V.T,
                 kx=kwargs['kx'], ky=kwargs['ky'])
             self.interpolant['mask'] = scipy.interpolate.RectBivariateSpline(
-                self.grid.x, self.grid.y, mask.T,
+                self.velocity.x, self.velocity.y, mask.T,
                 kx=kwargs['kx'], ky=kwargs['ky'])
         # create mask for invalid values
         invalid = np.ceil(self.interpolant['mask'].ev(
@@ -834,11 +866,13 @@ class advection():
             # use scipy regular grid to interpolate values for a given method
             # will extrapolate velocities forward in time if outside range
             self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.y,self.grid.x,self.grid.time), self.grid.U,
-                method=kwargs['method'], bounds_error=False, fill_value=None)
+                (self.velocity.y, self.velocity.x, self.velocity.time),
+                self.velocity.U, method=kwargs['method'], bounds_error=False,
+                fill_value=None)
             self.interpolant['V'] = scipy.interpolate.RegularGridInterpolator(
-                (self.grid.y,self.grid.x,self.grid.time), self.grid.V,
-                method=kwargs['method'], bounds_error=False, fill_value=None)
+                (self.velocity.y, self.velocity.x, self.velocity.time),
+                self.velocity.V, method=kwargs['method'], bounds_error=False,
+                fill_value=None)
         # calculate interpolated data
         U[v] = self.interpolant['U'].__call__(
             np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
@@ -849,9 +883,234 @@ class advection():
         V = np.nan_to_num(V, nan=kwargs['fill_value'])
         return (U, V)
 
-    def imshow(self, band=None, ax=None, xy_scale=1.0, **kwargs):
+    # PURPOSE: use unstructured interpolation of velocities to coordinates
+    def unstructured_interpolation(self, **kwargs):
         """
-        Create plot of velocity magnitude
+        Interpolate unstructured U and V velocities to coordinates using
+            N-dimensional interpolation functions
+
+        Parameters
+        ----------
+        x: float or NoneType, default None
+            x-coordinates
+        y: float or NoneType, default None
+            y-coordinates
+        t: float or NoneType, default None
+            time coordinates
+        method: str
+            Method of unstructured interpolation
+
+                - ``'nearestND'``
+                - ``'linearND'``
+        rescale: bool, default False
+            Rescale points to unit cube before performing interpolation
+        tree_options: dict or NoneType, default None
+            Options passed to underlying KDTree for ``nearestND``
+        fill_value: float, default np.nan
+            Invalid value
+
+        Returns
+        -------
+        U: float
+            Velocity in x-direction
+        V: float
+            Velocity in y-direction
+        """
+        # set default keyword options
+        kwargs.setdefault('x', None)
+        kwargs.setdefault('y', None)
+        kwargs.setdefault('t', None)
+        kwargs.setdefault('method', None)
+        kwargs.setdefault('rescale', False)
+        kwargs.setdefault('tree_options', None)
+        kwargs.setdefault('fill_value', self.fill_value)
+        # output interpolated data
+        U = np.full_like(kwargs['x'], np.nan)
+        V = np.full_like(kwargs['x'], np.nan)
+        # only run interpolation if coordinates are finite
+        # and within the extents of the input velocity mesh
+        valid = np.ones_like(kwargs['x'], dtype=bool)
+        valid &= np.isfinite(kwargs['x'])
+        valid &= np.isfinite(kwargs['y'])
+        valid &= self.inside_polygon(kwargs['x'], kwargs['y'])
+        # check that there are indice values
+        if not np.any(valid):
+            return (U, V)
+        # build delaunay triangulations for input mesh coordinates
+        if not hasattr(self.velocity, 'mesh'):
+            # attempt to build delaunay triangulation
+            _, self.velocity.mesh = self.find_valid_triangulation(
+                self.velocity.x, self.velocity.y)
+        # reduce to points within the convex hull of the triangulation
+        valid &= self.inside_simplex(kwargs['x'], kwargs['y'])
+        v, = np.nonzero(valid)
+        # interpolator and keyword arguments for selected method
+        if (kwargs['method'] == 'nearestND'):
+            Interpolator = scipy.interpolate.NearestNDInterpolator
+            kwds = dict(rescale=kwargs['rescale'],
+                tree_options=kwargs['tree_options'])
+        elif (kwargs['method'] == 'linearND'):
+            Interpolator = scipy.interpolate.LinearNDInterpolator
+            kwds = dict(rescale=kwargs['rescale'], fill_value=np.nan)
+        else:
+            raise ValueError('Invalid interpolation function')
+        # build interpolants for input velocity meshes
+        if not self.interpolant:
+            self.interpolant['U'] = Interpolator(
+                self.velocity.mesh, self.velocity.U, **kwds)
+            self.interpolant['V'] = Interpolator(
+                self.velocity.mesh, self.velocity.V, **kwds)
+        if not self.interpolant and (self.velocity.ndim > 1):
+            # build interpolants for time-variable velocities
+            nt = len(self.velocity.time)
+            # create 1-d interpolant through time
+            self.interpolant['time'] = scipy.interpolate.interp1d(
+                self.velocity.time, np.arange(nt), kind='linear')
+        # evaluate at points
+        if (self.velocity.ndim == 1):
+            # evalulate using invariant velocities
+            U[v] = self.interpolant['U'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+            V[v] = self.interpolant['V'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+        else:
+            # evalulate using time-variable velocities
+            UT = self.interpolant['U'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+            VT = self.interpolant['V'].__call__(
+                np.c_[kwargs['x'][v], kwargs['y'][v]])
+            # linearly interpolate in time
+            times = np.ones_like(kwargs['x'])*kwargs['t']
+            indices = self.interpolant['time'].__call__(times[v]).astype(int)
+            # clip indices to valid range for temporal interpolation
+            indices = np.clip(indices, 0, nt-1)
+            for tstep in np.unique(indices):
+                # find valid points
+                vi, = np.nonzero((indices == tstep) & valid)
+                # check that there are indice values (0 is falsy)
+                if not np.any(vi) and not np.any(vi == 0):
+                    continue
+                # calculate weights for linearly interpolating in time
+                weight = (times[vi] - self.velocity.time[tstep]) / \
+                    (self.velocity.time[tstep+1] - self.velocity.time[tstep])
+                # linearly interpolate in time
+                U[vi] = (1.0 - weight)*UT[vi,tstep] + weight*UT[vi,tstep+1]
+                V[vi] = (1.0 - weight)*VT[vi,tstep] + weight*VT[vi,tstep+1]
+        # replace invalid values with fill value
+        U = np.nan_to_num(U, nan=kwargs['fill_value'])
+        V = np.nan_to_num(V, nan=kwargs['fill_value'])
+        return (U, V)
+
+    # PURPOSE: find a valid Delaunay triangulation for coordinates x0 and y0
+    # http://www.qhull.org/html/qhull.htm#options
+    # Attempt 1: standard qhull options Qt Qbb Qc Qz
+    # Attempt 2: rescale and center the inputs with option QbB
+    # Attempt 3: joggle the inputs to find a triangulation with option QJ
+    # if no passing triangulations: exit with empty list
+    def find_valid_triangulation(self, x0, y0):
+        """
+        Attempt to find a valid Delaunay triangulation for coordinates
+
+        - Attempt 1: ``Qt Qbb Qc Qz``
+        - Attempt 2: ``Qt Qc QbB``
+        - Attempt 3: ``QJ QbB``
+
+        Parameters
+        ----------
+        x0: float
+            x-coordinates for mesh
+        y0: float
+            y-coordinates for mesh
+        """
+        # Attempt 1: try with standard options Qt Qbb Qc Qz
+        # Qt: triangulated output, all facets will be simplicial
+        # Qbb: scale last coordinate to [0,m] for Delaunay triangulations
+        # Qc: keep coplanar points with nearest facet
+        # Qz: add point-at-infinity to Delaunay triangulation
+
+        # Attempt 2 in case of qhull error from Attempt 1 try Qt Qc QbB
+        # Qt: triangulated output, all facets will be simplicial
+        # Qc: keep coplanar points with nearest facet
+        # QbB: scale input to unit cube centered at the origin
+
+        # Attempt 3 in case of qhull error from Attempt 2 try QJ QbB
+        # QJ: joggle input instead of merging facets
+        # QbB: scale input to unit cube centered at the origin
+
+        # try each set of qhull_options
+        for i,qhull_option in enumerate(['Qt Qbb Qc Qz','Qt Qc QbB','QJ QbB']):
+            try:
+                triangle = scipy.spatial.Delaunay(np.c_[x0, y0],
+                    qhull_options=qhull_option)
+            except scipy.spatial.qhull.QhullError:
+                pass
+            else:
+                return (i+1, triangle)
+        # raise exception if still finding errors
+        raise scipy.spatial.qhull.QhullError
+
+    # PURPOSE: check a specified 2D point is inside the convex hull of a mesh
+    def inside_simplex(self, x, y):
+        """
+        Indicates whether a specified 2D point is inside the convex hull of a mesh
+
+        Parameters
+        ----------
+        x: float
+            x-coordinates to query
+        y: float
+            y-coordinates to query
+
+        Returns
+        -------
+        flag: bool
+            Flag specifying if point is within convex hull
+
+                - ``True`` for points within convex hull
+                - ``False`` for points outside convex hull
+        """
+        # only run if velocity mesh has a find simplex attribute
+        if hasattr(self.velocity.mesh, 'find_simplex'):
+            return (self.velocity.mesh.find_simplex(np.c_[x, y]) >= 0)
+        else:
+            raise AttributeError("Convex hull cannot be found for mesh")
+
+    # PURPOSE: calculates the maximum angle within a triangle given the
+    # coordinates of the triangles vertices A(x,y), B(x,y), C(x,y)
+    def triangle_maximum_angle(self, Ax, Ay, Bx, By, Cx, Cy):
+        """
+        Calculates the maximum angles within triangles with
+        vertices A, B and C
+
+        Parameters
+        ----------
+        Ax: float
+            x-coordinates of A vertices
+        Ay: float
+            y-coordinates of A vertices
+        Bx: float
+            x-coordinates of B vertices
+        By: float
+            y-coordinates of B vertices
+        Cx: float
+            x-coordinates of C vertices
+        Cy: float
+            y-coordinates of C vertices
+        """
+        # calculate sides of triangle (opposite interior angle at vertex)
+        a = np.atleast_1d(np.sqrt((Cx - Bx)**2 + (Cy - By)**2))
+        b = np.atleast_1d(np.sqrt((Cx - Ax)**2 + (Cy - Ay)**2))
+        c = np.atleast_1d(np.sqrt((Ax - Bx)**2 + (Ay - By)**2))
+        # calculate interior angles and convert to degrees
+        alpha = np.arccos((b**2 + c**2 - a**2)/(2.0*b*c))*180.0/np.pi
+        beta = np.arccos((a**2 + c**2 - b**2)/(2.0*a*c))*180.0/np.pi
+        gamma = np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))*180.0/np.pi
+        # return the largest angle within the triangle
+        return np.max(np.c_[alpha, beta, gamma], axis=1)
+
+    def imshow(self, band=None, ax=None, imtype='speed', xy_scale=1.0, **kwargs):
+        """
+        Create plot of velocity magnitude or divergence
 
         Parameters
         ----------
@@ -859,6 +1118,12 @@ class advection():
             band of velocity grid to show
         ax: obj or NoneType, default None
             matplotlib figure axis
+        imtype: str, default 'speed'
+            image type to plot
+
+
+                - ``'speed'``: velocity magnitude
+                - ``'divergence'``: flow divergence
         xy_scale: float, default 1.0
             Scaling factor for converting horizontal coordinates
         **kwargs: dict
@@ -869,22 +1134,101 @@ class advection():
         im: obj
             matplotlib ``AxesImage`` object
         """
-        kwargs['extent'] = np.array(self.grid.extent)*xy_scale
+        kwargs['extent'] = np.array(self.velocity.extent)*xy_scale
         kwargs['origin'] = 'lower'
         if ax is None:
             ax = plt.gca()
         if band is None:
-            U = getattr(self.grid, 'U')
-            V = getattr(self.grid, 'V')
+            U = getattr(self.velocity, 'U')
+            V = getattr(self.velocity, 'V')
         elif (band is not None):
-            U = getattr(self.grid, 'U')[:,:,band]
-            V = getattr(self.grid, 'V')[:,:,band]
-        # calculate speed
-        zz = np.sqrt(U**2 + V**2)
-        # create image plot of velocity magnitude
+            U = getattr(self.velocity, 'U')[:,:,band]
+            V = getattr(self.velocity, 'V')[:,:,band]
+        # calculate ice speed or flow divergence
+        if (imtype == 'speed'):
+            # calculate speed
+            zz = np.sqrt(U**2 + V**2)
+        elif (imtype == 'divergence'):
+            # calculate divergence
+            dU = np.gradient(U, self.velocity.x, axis=1)
+            dV = np.gradient(V, self.velocity.y, axis=0)
+            zz = dU + dV
+        # create image plot of velocity magnitude or divergence
         im = ax.imshow(zz, **kwargs)
         # return the image
         return im
+
+    def triplot(self, ax=None, **kwargs):
+        """
+        Create plot of unstructured triangular mesh
+
+        Parameters
+        ----------
+        ax: obj or NoneType, default None
+            matplotlib figure axis
+        **kwargs: dict
+            Keyword arguments for ``plt.triplot``
+
+        Returns
+        -------
+        im: obj
+            matplotlib ``AxesImage`` object
+        """
+        if ax is None:
+            ax = plt.gca()
+        # get delaunay triangulation
+        if not hasattr(self.velocity, 'mesh'):
+            # attempt to build delaunay triangulation
+            _, self.velocity.mesh = self.find_valid_triangulation(
+                self.velocity.x, self.velocity.y)
+        # build matplotlib triangulation object
+        triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
+            self.velocity.mesh.vertices)
+        # create triangle plot of velocity magnitude
+        tri = ax.triplot(triangle, **kwargs)
+        # return the triangle plot
+        return tri
+
+    def tricontourf(self, band=None, ax=None, **kwargs):
+        """
+        Create plot of velocity magnitude for unstructured meshes
+
+        Parameters
+        ----------
+        band: int or NoneType, default None
+            band of velocity mesh to show
+        ax: obj or NoneType, default None
+            matplotlib figure axis
+        **kwargs: dict
+            Keyword arguments for ``plt.tricontourf``
+
+        Returns
+        -------
+        im: obj
+            matplotlib ``AxesImage`` object
+        """
+        if ax is None:
+            ax = plt.gca()
+        if band is None:
+            U = getattr(self.velocity, 'U')
+            V = getattr(self.velocity, 'V')
+        elif (band is not None):
+            U = getattr(self.velocity, 'U')[:,band]
+            V = getattr(self.velocity, 'V')[:,band]
+        # calculate speed
+        zz = np.sqrt(U**2 + V**2)
+        # get delaunay triangulation
+        if not hasattr(self.velocity, 'mesh'):
+            # attempt to build delaunay triangulation
+            _, self.velocity.mesh = self.find_valid_triangulation(
+                self.velocity.x, self.velocity.y)
+        # build matplotlib triangulation object
+        triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
+            self.velocity.mesh.vertices)
+        # create triangle plot of velocity magnitude
+        tri = ax.tricontourf(triangle, zz, **kwargs)
+        # return the triangle plot
+        return tri
 
     def streamplot(self, band=None, ax=None, xy_scale=1.0, density=[0.5, 0.5], color='0.3', **kwargs):
         """
@@ -913,12 +1257,12 @@ class advection():
         if ax is None:
             ax = plt.gca()
         if band is None:
-            U = getattr(self.grid, 'U')
-            V = getattr(self.grid, 'V')
+            U = getattr(self.velocity, 'U')
+            V = getattr(self.velocity, 'V')
         elif (band is not None):
-            U = getattr(self.grid, 'U')[:,:,band]
-            V = getattr(self.grid, 'V')[:,:,band]
+            U = getattr(self.velocity, 'U')[:,:,band]
+            V = getattr(self.velocity, 'V')[:,:,band]
         # add stream plot of velocity vectors
-        gridx,gridy = np.meshgrid(self.grid.x*xy_scale, self.grid.y*xy_scale)
+        gridx,gridy = np.meshgrid(self.velocity.x*xy_scale, self.velocity.y*xy_scale)
         sp = ax.streamplot(gridx, gridy, U, V, density=density, color=color, **kwargs)
         return sp
