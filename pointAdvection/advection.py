@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (08/2022)
+Written by Tyler Sutterley (10/2022)
 Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
@@ -22,6 +22,7 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 10/2022: added option to plot divergence of velocity field
     Updated 08/2022: verify datatype of imported velocity fields
         add interpolation and plot routines for unstructured meshes
         place some imports within try/except statements
@@ -838,11 +839,13 @@ class advection():
             # use scipy regular grid to interpolate values for a given method
             # will extrapolate velocities forward in time if outside range
             self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
-                (self.velocity.y,self.velocity.x,self.velocity.time), self.velocity.U,
-                method=kwargs['method'], bounds_error=False, fill_value=None)
+                (self.velocity.y, self.velocity.x, self.velocity.time),
+                self.velocity.U, method=kwargs['method'], bounds_error=False,
+                fill_value=None)
             self.interpolant['V'] = scipy.interpolate.RegularGridInterpolator(
-                (self.velocity.y,self.velocity.x,self.velocity.time), self.velocity.V,
-                method=kwargs['method'], bounds_error=False, fill_value=None)
+                (self.velocity.y, self.velocity.x, self.velocity.time),
+                self.velocity.V, method=kwargs['method'], bounds_error=False,
+                fill_value=None)
         # calculate interpolated data
         U[v] = self.interpolant['U'].__call__(
             np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
@@ -909,7 +912,7 @@ class advection():
         # build delaunay triangulations for input mesh coordinates
         if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.velocity.mesh = self.find_valid_triangulation(
+            _, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
         # reduce to points within the convex hull of the triangulation
         valid &= self.inside_simplex(kwargs['x'], kwargs['y'])
@@ -1078,9 +1081,9 @@ class advection():
         # return the largest angle within the triangle
         return np.max(np.c_[alpha, beta, gamma], axis=1)
 
-    def imshow(self, band=None, ax=None, xy_scale=1.0, **kwargs):
+    def imshow(self, band=None, ax=None, imtype='speed', xy_scale=1.0, **kwargs):
         """
-        Create plot of velocity magnitude
+        Create plot of velocity magnitude or divergence
 
         Parameters
         ----------
@@ -1088,6 +1091,12 @@ class advection():
             band of velocity grid to show
         ax: obj or NoneType, default None
             matplotlib figure axis
+        imtype: str, default 'speed'
+            image type to plot
+
+
+                - ``'speed'``: velocity magnitude
+                - ``'divergence'``: flow divergence
         xy_scale: float, default 1.0
             Scaling factor for converting horizontal coordinates
         **kwargs: dict
@@ -1108,9 +1117,16 @@ class advection():
         elif (band is not None):
             U = getattr(self.velocity, 'U')[:,:,band]
             V = getattr(self.velocity, 'V')[:,:,band]
-        # calculate speed
-        zz = np.sqrt(U**2 + V**2)
-        # create image plot of velocity magnitude
+        # calculate ice speed or flow divergence
+        if (imtype == 'speed'):
+            # calculate speed
+            zz = np.sqrt(U**2 + V**2)
+        elif (imtype == 'divergence'):
+            # calculate divergence
+            dU = np.gradient(U, self.velocity.x, axis=1)
+            dV = np.gradient(V, self.velocity.y, axis=0)
+            zz = dU + dV
+        # create image plot of velocity magnitude or divergence
         im = ax.imshow(zz, **kwargs)
         # return the image
         return im
@@ -1136,7 +1152,7 @@ class advection():
         # get delaunay triangulation
         if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.velocity.mesh = self.find_valid_triangulation(
+            _, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
         # build matplotlib triangulation object
         triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
@@ -1177,7 +1193,7 @@ class advection():
         # get delaunay triangulation
         if not hasattr(self.velocity, 'mesh'):
             # attempt to build delaunay triangulation
-            attempt, self.velocity.mesh = self.find_valid_triangulation(
+            _, self.velocity.mesh = self.find_valid_triangulation(
                 self.velocity.x, self.velocity.y)
         # build matplotlib triangulation object
         triangle = mtri.Triangulation(self.velocity.x, self.velocity.y,
