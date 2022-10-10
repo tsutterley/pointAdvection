@@ -23,6 +23,7 @@ PYTHON DEPENDENCIES:
 
 UPDATE HISTORY:
     Updated 10/2022: added option to plot divergence of velocity field
+        added sreaklines based on a velocity field
     Updated 08/2022: verify datatype of imported velocity fields
         add interpolation and plot routines for unstructured meshes
         place some imports within try/except statements
@@ -80,6 +81,9 @@ class advection():
         ``pointCollection`` object of velocity fields
 
         Can be type ``grid`` or ``mesh``
+    streak: dict
+        path traversed during advection (set kwarg 'streak' to true 
+                        in translate methods to enable)
     filename: str
         input filename of velocity file
     integrator: str
@@ -118,12 +122,22 @@ class advection():
         self.y0=None
         self.t0=kwargs['t0']
         self.velocity=None
+        self.streak={'x':[], 'y':[],'t':[]}
         self.filename=None
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
         self.fill_value=kwargs['fill_value']
-
+        
+    def __update_streak__(self, t, **kwargs):
+        """
+        Update the streakline during flow tracing.  
+        """
+        if kwargs['streak']:
+            self.streak['x'] += [self.x0.copy()]
+            self.streak['y'] += [self.y0.copy()]
+            self.streak['t'] += [t.copy()]
+        
     def case_insensitive_filename(self, filename):
         """
         Searches a directory for a filename without case dependence
@@ -152,7 +166,7 @@ class advection():
         # print filename
         logging.debug(self.filename)
         return self
-
+    
     # PURPOSE: read geotiff velocity file and extract x and y velocities
     def from_geotiff(self, filename, bounds=None, buffer=5e4,
         scale=1.0/31557600.0):
@@ -334,6 +348,7 @@ class advection():
         kwargs.setdefault('method', self.method)
         kwargs.setdefault('step', 1)
         kwargs.setdefault('t0', self.t0)
+        kwargs.setdefault('streak', False)
         # check that there are points within the velocity file
         if not self.inside_polygon(self.x,self.y).any():
             raise ValueError('No points within ice velocity image')
@@ -358,15 +373,16 @@ class advection():
             # average number of steps between the two datasets
             n_steps = np.abs(np.mean(self.t0) - np.mean(self.t))/seconds
         # check input advection functions
+        kwargs.update({'N':np.int64(n_steps)})
         if (self.integrator == 'euler'):
             # euler: Explicit Euler method
-            return self.euler(N=np.int64(n_steps))
+            return self.euler(**kwargs)
         elif (self.integrator == 'RK4'):
             # RK4: Fourth-order Runge-Kutta method
-            return self.RK4(N=np.int64(n_steps))
+            return self.RK4(**kwargs)
         elif (self.integrator == 'RKF45'):
             # RKF45: adaptive Runge-Kutta-Fehlberg 4(5) method
-            return self.RKF45(N=np.int64(n_steps))
+            return self.RKF45(**kwargs)
         else:
             raise ValueError('Invalid advection function')
 
@@ -388,12 +404,15 @@ class advection():
         self.y0 = np.copy(self.y)
         # keep track of time for 3-dimensional interpolations
         t = np.copy(self.t)
-        for i in range(kwargs['N']):
+        self.__update_streak__(t, **kwargs)
+        for i in range(kwargs['N']):           
             u1, v1 = self.interpolate(x=self.x0, y=self.y0, t=t)
             self.x0 += u1*dt
             self.y0 += v1*dt
             # add to time
             t += dt
+            self.__update_streak__(t, **kwargs)
+
         # return the translated coordinates
         return self
 
@@ -413,6 +432,7 @@ class advection():
         dt = (self.t0 - self.t)/np.float64(kwargs['N'])
         self.x0 = np.copy(self.x)
         self.y0 = np.copy(self.y)
+        self.__update_streak__(self.t, **kwargs)
         # keep track of time for 3-dimensional interpolations
         t = np.copy(self.t)
         for i in range(kwargs['N']):
@@ -427,6 +447,8 @@ class advection():
             self.y0 += dt*(v1 + 2.0*v2 + 2.0*v3 + v4)/6.0
             # add to time
             t += dt
+            self.__update_streak__(t, **kwargs)
+
         # return the translated coordinates
         return self
 
@@ -453,6 +475,10 @@ class advection():
         tolerance = 5e-2
         # multiply scale by factors of 2 until iteration reaches tolerance level
         scale = 1
+        self.x0 = np.copy(self.x)
+        self.y0 = np.copy(self.y)
+        self.__update_streak__(self.t, **kwargs)
+        
         # while the difference (sigma) is greater than the tolerance
         while (sigma > tolerance) or np.isnan(sigma):
             # translate parcel from time 1 to time 2 at time step
@@ -480,6 +506,7 @@ class advection():
             # else: multiply scale by factors of 2 and re-run iteration
             if (sigma <= tolerance) or np.isnan(sigma):
                 self.x0,self.y0 = (np.copy(X4OA), np.copy(Y4OA))
+                self.__update_streak__(t, **kwargs)
             else:
                 scale *= 2
         # return the translated coordinates
