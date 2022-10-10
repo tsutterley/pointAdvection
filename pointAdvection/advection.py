@@ -82,7 +82,7 @@ class advection():
 
         Can be type ``grid`` or ``mesh``
     streak: dict
-        path traversed during advection (set kwarg 'streak' to true 
+        path traversed during advection (set kwarg 'streak' to true
                         in translate methods to enable)
     filename: str
         input filename of velocity file
@@ -128,16 +128,16 @@ class advection():
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
         self.fill_value=kwargs['fill_value']
-        
+
     def __update_streak__(self, t, **kwargs):
         """
-        Update the streakline during flow tracing.  
+        Update the streakline during flow tracing.
         """
         if kwargs['streak']:
             self.streak['x'] += [self.x0.copy()]
             self.streak['y'] += [self.y0.copy()]
             self.streak['t'] += [t.copy()]
-        
+
     def case_insensitive_filename(self, filename):
         """
         Searches a directory for a filename without case dependence
@@ -166,7 +166,7 @@ class advection():
         # print filename
         logging.debug(self.filename)
         return self
-    
+
     # PURPOSE: read geotiff velocity file and extract x and y velocities
     def from_geotiff(self, filename, bounds=None, buffer=5e4,
         scale=1.0/31557600.0):
@@ -405,7 +405,7 @@ class advection():
         # keep track of time for 3-dimensional interpolations
         t = np.copy(self.t)
         self.__update_streak__(t, **kwargs)
-        for i in range(kwargs['N']):           
+        for i in range(kwargs['N']):
             u1, v1 = self.interpolate(x=self.x0, y=self.y0, t=t)
             self.x0 += u1*dt
             self.y0 += v1*dt
@@ -478,7 +478,7 @@ class advection():
         self.x0 = np.copy(self.x)
         self.y0 = np.copy(self.y)
         self.__update_streak__(self.t, **kwargs)
-        
+
         # while the difference (sigma) is greater than the tolerance
         while (sigma > tolerance) or np.isnan(sigma):
             # translate parcel from time 1 to time 2 at time step
