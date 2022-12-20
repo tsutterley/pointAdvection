@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_ice_fronts.py
-Written by Tyler Sutterley (08/2022)
+Written by Tyler Sutterley (12/2022)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -24,6 +24,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 12/2022: using virtual file systems to access files
     Written 08/2022
 """
 import sys
@@ -33,10 +34,11 @@ import logging
 import argparse
 import datetime
 import warnings
+import posixpath
 import traceback
 import numpy as np
 import pointAdvection
-import pointAdvection.time
+
 # attempt imports
 try:
     import fiona
@@ -69,10 +71,10 @@ warnings.filterwarnings("ignore")
 def info(args):
     logging.info(os.path.basename(sys.argv[0]))
     logging.info(args)
-    logging.info('module name: {0}'.format(__name__))
+    logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
-        logging.info('parent process: {0:d}'.format(os.getppid()))
-    logging.info('process id: {0:d}'.format(os.getpid()))
+        logging.info(f'parent process: {os.getppid():d}')
+    logging.info(f'process id: {os.getpid():d}')
 
 # PURPOSE: create time-variable ice front masks
 def mask_ice_fronts(base_dir, regions,
@@ -91,23 +93,32 @@ def mask_ice_fronts(base_dir, regions,
     # regular expression pattern for finding files and
     # extracting information from file names
     regex_years = r'|'.join(f'{y:d}' for y in years) if years else r'\d+'
-    regex_pattern = r'(.*?)_({0})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
-    rx = re.compile(regex_pattern.format(regex_years), re.VERBOSE)
+    regex_pattern = rf'(.*?)_({regex_years})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
+    rx = re.compile(regex_pattern, re.VERBOSE)
+
+    # get all available regions from icelines service
+    HOST = ['https://download.geoservice.dlr.de','icelines','files']
+    if (regions is None):
+        colnames,_ = pointAdvection.utilities.geoservice_list(HOST,
+            pattern=r'[\w]\/', sort=True)
+        regions = [r.replace(posixpath.sep,'') for r in colnames]
+
     # for each region to read
     for region in regions:
-        # directory for region
-        directory = os.path.join(base_dir, region, 'fronts')
-        # find regional files in directory
-        files = sorted([f for f in os.listdir(directory) if rx.match(f)])
-        for f in files:
+        # url for region
+        region_url = [*HOST, region, 'daily', 'fronts']
+        colnames,_ = pointAdvection.utilities.geoservice_list(region_url,
+            pattern=regex_pattern, sort=True)
+        # for each regional file
+        for f in colnames:
             # extract information from file
             SAT, YY, MM, DD, ID, ICES = rx.findall(f).pop()
             # create list for day
             if f'{YY}-{MM}-{DD}' not in ice_front_files.keys():
                 ice_front_files[f'{YY}-{MM}-{DD}'] = []
             # read file to extract bounds
-            filename = os.path.join(directory,f)
-            ds = fiona.open(filename)
+            mmap_name = posixpath.join('/vsicurl',*region_url,f)
+            ds = fiona.open(mmap_name)
             # coordinate reference system of file
             crs = pyproj.CRS.from_string(ds.crs['init'])
             # try to extract the bounds of the dataset
@@ -125,13 +136,11 @@ def mask_ice_fronts(base_dir, regions,
                 pass
             else:
                 # append filename to list
-                ice_front_files[f'{YY}-{MM}-{DD}'].append(filename)
+                ice_front_files[f'{YY}-{MM}-{DD}'].append(mmap_name)
 
     # calculate buffered limits of x and y
     xlimits = (minx - 1e3*buffer, maxx + 1e3*buffer)
     ylimits = (miny - 1e3*buffer, maxy + 1e3*buffer)
-    # aspect ratio of input grid
-    aspect = np.float64(ylimits[1]-ylimits[0])/np.float64(xlimits[1]-xlimits[0])
     # scale for converting from m/yr to m/s
     scale = 1.0/31557600.0
     # time steps to calculate advection
@@ -187,7 +196,7 @@ def mask_ice_fronts(base_dir, regions,
         for f in sorted(ice_front_files[date]):
             logging.info(os.path.basename(f))
             # read geopackage url and extract coordinates
-            ds = fiona.open(os.path.join(directory, f))
+            ds = fiona.open(f)
             # iterate over features
             for key, val in ds.items():
                 # iterate over geometries and convert to linestrings
@@ -208,7 +217,7 @@ def mask_ice_fronts(base_dir, regions,
                             pass
 
         # total number of points
-        logging.info('Total points: {0:d}'.format(len(x)))
+        logging.info(f'Total points: {len(x):d}')
         # set original x and y coordinates
         adv.x = np.copy(x)
         adv.y = np.copy(y)
@@ -327,9 +336,13 @@ def main():
     loglevels = [logging.CRITICAL, logging.INFO, logging.DEBUG]
     logging.basicConfig(level=loglevels[args.verbose])
 
+    # check internet connection with icelines file service
+    HOST = 'https://download.geoservice.dlr.de/icelines/files/'
+
     # try to run the program with listed parameters
     try:
         info(args)
+        pointAdvection.utilities.check_connection(HOST)
         # run program with parameters
         mask_ice_fronts(args.directory, args.region,
             velocity_file=args.velocity_file,
@@ -343,7 +356,7 @@ def main():
         # if there has been an error exception
         # print the type, value, and stack trace of the
         # current exception being handled
-        logging.critical('process id {0:d} failed'.format(os.getpid()))
+        logging.critical(f'process id {os.getpid():d} failed')
         logging.error(traceback.format_exc())
 
 # run main program

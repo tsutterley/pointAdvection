@@ -12,7 +12,7 @@ Calling Sequence
 ################
 
 .. argparse::
-    :filename: ../../scripts/mask_ice_fronts.py
+    :filename: mask_ice_fronts.py
     :func: arguments
     :prog: mask_ice_fronts.py
     :nodescription:
