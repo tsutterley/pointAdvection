@@ -7,5 +7,5 @@ netCDF4
 numpy
 pyproj
 python-dateutil
-scipy
+scipy<=1.9.3
 shapely
