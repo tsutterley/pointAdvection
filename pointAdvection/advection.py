@@ -53,9 +53,8 @@ import matplotlib.tri as mtri
 try:
     import pointCollection as pc
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("pointCollection not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("pointCollection not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
