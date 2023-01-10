@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 u"""
 time.py
-Written by Tyler Sutterley (08/2022)
+Written by Tyler Sutterley (12/2022)
 Utilities for calculating time operations
 
 PYTHON DEPENDENCIES:
@@ -12,6 +12,7 @@ PYTHON DEPENDENCIES:
         https://dateutil.readthedocs.io/en/stable/
 
 UPDATE HISTORY:
+    Updated 12/2022: output variables for some standard epochs
     Updated 08/2022: output variables to unit conversion to seconds
         and the number of days per month for both leap and standard years
     Updated 05/2022: changed keyword arguments to camel case
@@ -39,6 +40,14 @@ _to_sec = {'microseconds': 1e-6, 'microsecond': 1e-6,
            'hours': 3600.0, 'hour': 3600.0,
            'hr': 3600.0, 'hrs': 3600.0, 'h': 3600.0,
            'day': 86400.0, 'days': 86400.0, 'd': 86400.0}
+
+# standard epochs
+_mjd_epoch = (1858, 11, 17, 0, 0, 0)
+_ntp_epoch = (1900, 1, 1, 0, 0, 0)
+_unix_epoch = (1970, 1, 1, 0, 0, 0)
+_gps_epoch = (1980, 1, 6, 0, 0, 0)
+_j2000_epoch = (2000, 1, 1, 12, 0, 0)
+_atlas_sdp_epoch = (2018, 1, 1, 0, 0, 0)
 
 # PURPOSE: parse a date string into epoch and units scale
 def parse_date_string(date_string):
@@ -225,7 +234,7 @@ def convert_calendar_dates(year, month, day, hour=0.0, minute=0.0, second=0.0,
         np.floor(3.0*(np.floor((year + (month - 9.0)/7.0)/100.0) + 1.0)/4.0) + \
         np.floor(275.0*month/9.0) + day + hour/24.0 + minute/1440.0 + \
         second/86400.0 + 1721028.5 - 2400000.5
-    epoch1 = datetime.datetime(1858, 11, 17, 0, 0, 0)
+    epoch1 = datetime.datetime(*_mjd_epoch)
     epoch2 = datetime.datetime(*epoch)
     delta_time_epochs = (epoch2 - epoch1).total_seconds()
     # return the date in units since epoch

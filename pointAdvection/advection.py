@@ -23,7 +23,7 @@ PYTHON DEPENDENCIES:
 
 UPDATE HISTORY:
     Updated 10/2022: added option to plot divergence of velocity field
-        added sreaklines based on a velocity field
+        added streaklines based on a velocity field
     Updated 08/2022: verify datatype of imported velocity fields
         add interpolation and plot routines for unstructured meshes
         place some imports within try/except statements
@@ -53,9 +53,8 @@ import matplotlib.tri as mtri
 try:
     import pointCollection as pc
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("pointCollection not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("pointCollection not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
@@ -160,7 +159,7 @@ class advection():
                 directory = os.path.dirname(os.path.expanduser(filename))
                 f = [f for f in os.listdir(directory) if re.match(basename,f,re.I)]
                 if not f:
-                    errmsg = '{0} not found in file system'.format(filename)
+                    errmsg = f'{filename} not found in file system'
                     raise FileNotFoundError(errmsg)
                 self.filename = os.path.join(directory,f.pop())
         # print filename

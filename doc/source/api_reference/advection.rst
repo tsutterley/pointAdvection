@@ -1,6 +1,6 @@
-============
-advection.py
-============
+=========
+advection
+=========
 
 Routines for advecting ice parcels using velocity grids
 

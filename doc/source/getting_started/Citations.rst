@@ -48,6 +48,7 @@ This software is also dependent on other commonly used Python packages:
 - `fiona: Python wrapper for vector data access functions from the OGR library <https://fiona.readthedocs.io/en/latest/manual.html>`_
 - `gdal: Pythonic interface to the Geospatial Data Abstraction Library (GDAL) <https://pypi.python.org/pypi/GDAL>`_
 - `h5py: Python interface for Hierarchal Data Format 5 (HDF5) <http://h5py.org>`_
+- `lxml: processing XML and HTML in Python <https://pypi.python.org/pypi/lxml>`_
 - `matplotlib: Python 2D plotting library <https://matplotlib.org/>`_
 - `netCDF4: Python interface to the netCDF C library <https://unidata.github.io/netcdf4-python/netCDF4/index.html>`_
 - `numpy: Scientific Computing Tools For Python <https://numpy.org>`_

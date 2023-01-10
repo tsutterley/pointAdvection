@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_ice_fronts.py
-Written by Tyler Sutterley (08/2022)
+Written by Tyler Sutterley (01/2023)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -20,10 +20,13 @@ COMMAND LINE OPTIONS:
         linear
         nearest
         bilinear
+    -t X, --timeout X: Timeout in seconds for blocking operations
     -V, --verbose: Verbose output of processing run
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 01/2023: add option for setting connection timeout
+    Updated 12/2022: using virtual file systems to access files
     Written 08/2022
 """
 import sys
@@ -33,35 +36,32 @@ import logging
 import argparse
 import datetime
 import warnings
+import posixpath
 import traceback
 import numpy as np
 import pointAdvection
-import pointAdvection.time
+
 # attempt imports
 try:
     import fiona
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("fiona not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("fiona not available", ImportWarning)
 try:
     import pointCollection as pc
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("pointCollection not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("pointCollection not available", ImportWarning)
 try:
     import pyproj
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("pyproj not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("pyproj not available", ImportWarning)
 try:
     import shapely.geometry
 except (ImportError, ModuleNotFoundError) as e:
-    warnings.filterwarnings("always")
-    warnings.warn("shapely not available")
-    warnings.warn("Some functions will throw an exception if called")
+    warnings.filterwarnings("module")
+    warnings.warn("shapely not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
@@ -69,10 +69,24 @@ warnings.filterwarnings("ignore")
 def info(args):
     logging.info(os.path.basename(sys.argv[0]))
     logging.info(args)
-    logging.info('module name: {0}'.format(__name__))
+    logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
-        logging.info('parent process: {0:d}'.format(os.getppid()))
-    logging.info('process id: {0:d}'.format(os.getpid()))
+        logging.info(f'parent process: {os.getppid():d}')
+    logging.info(f'process id: {os.getpid():d}')
+
+# PURPOSE: attempt to list from the DLR Icelines Download Service
+def geoservice_list(region_url, retries=5, **kwargs):
+    # for each retry
+    for retry in range(retries):
+        try:
+            cols, tims = pointAdvection.utilities.geoservice_list(
+                region_url, **kwargs)
+        except Exception as exc:
+            pass
+        else:
+            return (cols, tims)
+    # reached end of available retries
+    raise RuntimeError('End of Retries')
 
 # PURPOSE: create time-variable ice front masks
 def mask_ice_fronts(base_dir, regions,
@@ -82,7 +96,12 @@ def mask_ice_fronts(base_dir, regions,
     years=None,
     buffer=0,
     method=None,
+    timeout=None,
     mode=None):
+
+    # recursively create output directories
+    if not os.access(base_dir, os.F_OK):
+        os.makedirs(base_dir, mode=mode)
 
     # dictionary of files for dates
     ice_front_files = {}
@@ -91,27 +110,36 @@ def mask_ice_fronts(base_dir, regions,
     # regular expression pattern for finding files and
     # extracting information from file names
     regex_years = r'|'.join(f'{y:d}' for y in years) if years else r'\d+'
-    regex_pattern = r'(.*?)_({0})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
-    rx = re.compile(regex_pattern.format(regex_years), re.VERBOSE)
+    regex_pattern = rf'(.*?)_({regex_years})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
+    rx = re.compile(regex_pattern, re.VERBOSE)
+
+    # get all available regions from icelines service
+    HOST = ['https://download.geoservice.dlr.de','icelines','files']
+    if (regions is None):
+        colnames,_ = geoservice_list(HOST, pattern=r'[\w]\/',
+            sort=True, timeout=timeout)
+        regions = [r.replace(posixpath.sep,'') for r in colnames]
+
     # for each region to read
     for region in regions:
-        # directory for region
-        directory = os.path.join(base_dir, region, 'fronts')
-        # find regional files in directory
-        files = sorted([f for f in os.listdir(directory) if rx.match(f)])
-        for f in files:
+        # url for region
+        region_url = [*HOST, region, 'daily', 'fronts']
+        colnames,_ = geoservice_list(region_url, pattern=regex_pattern,
+            sort=True, timeout=timeout)
+        # for each regional file
+        for f in colnames:
             # extract information from file
             SAT, YY, MM, DD, ID, ICES = rx.findall(f).pop()
             # create list for day
             if f'{YY}-{MM}-{DD}' not in ice_front_files.keys():
                 ice_front_files[f'{YY}-{MM}-{DD}'] = []
-            # read file to extract bounds
-            filename = os.path.join(directory,f)
-            ds = fiona.open(filename)
-            # coordinate reference system of file
-            crs = pyproj.CRS.from_string(ds.crs['init'])
             # try to extract the bounds of the dataset
             try:
+                # read file to extract bounds
+                mmap_name = posixpath.join('/vsicurl',*region_url,f)
+                ds = fiona.open(mmap_name)
+                # coordinate reference system of file
+                crs = pyproj.CRS.from_string(ds.crs['init'])
                 # determine if bounds need to be extended
                 if (ds.bounds[0] < minx):
                     minx = np.copy(ds.bounds[0])
@@ -125,13 +153,13 @@ def mask_ice_fronts(base_dir, regions,
                 pass
             else:
                 # append filename to list
-                ice_front_files[f'{YY}-{MM}-{DD}'].append(filename)
+                ice_front_files[f'{YY}-{MM}-{DD}'].append(mmap_name)
+                # clear the dataset
+                ds = None
 
     # calculate buffered limits of x and y
     xlimits = (minx - 1e3*buffer, maxx + 1e3*buffer)
     ylimits = (miny - 1e3*buffer, maxy + 1e3*buffer)
-    # aspect ratio of input grid
-    aspect = np.float64(ylimits[1]-ylimits[0])/np.float64(xlimits[1]-xlimits[0])
     # scale for converting from m/yr to m/s
     scale = 1.0/31557600.0
     # time steps to calculate advection
@@ -160,7 +188,7 @@ def mask_ice_fronts(base_dir, regions,
     end_date = None
     # for each date in the list of files
     ice_front_dates = sorted(ice_front_files.keys())
-    for i,date in enumerate(ice_front_dates):
+    for i, date in enumerate(ice_front_dates):
         # only run if date with all regions
         if len(ice_front_files[date]) < len(regions):
             continue
@@ -187,7 +215,7 @@ def mask_ice_fronts(base_dir, regions,
         for f in sorted(ice_front_files[date]):
             logging.info(os.path.basename(f))
             # read geopackage url and extract coordinates
-            ds = fiona.open(os.path.join(directory, f))
+            ds = fiona.open(f)
             # iterate over features
             for key, val in ds.items():
                 # iterate over geometries and convert to linestrings
@@ -208,7 +236,7 @@ def mask_ice_fronts(base_dir, regions,
                             pass
 
         # total number of points
-        logging.info('Total points: {0:d}'.format(len(x)))
+        logging.info(f'Total points: {len(x):d}')
         # set original x and y coordinates
         adv.x = np.copy(x)
         adv.y = np.copy(y)
@@ -273,6 +301,8 @@ def arguments():
             """,
         fromfile_prefix_chars="@"
     )
+    parser.convert_arg_line_to_args = \
+        pointAdvection.utilities.convert_arg_line_to_args
     # command line parameters
     # working data directory for location of ice fronts
     parser.add_argument('--directory','-D',
@@ -306,6 +336,10 @@ def arguments():
         metavar='METHOD', type=str, default='spline',
         choices=('spline','linear','nearest','bilinear'),
         help='Spatial interpolation method')
+    # connection timeout
+    parser.add_argument('--timeout','-t',
+        type=int, default=360,
+        help='Timeout in seconds for blocking operations')
     # print information about processing run
     parser.add_argument('--verbose','-V',
         action='count', default=0,
@@ -327,9 +361,13 @@ def main():
     loglevels = [logging.CRITICAL, logging.INFO, logging.DEBUG]
     logging.basicConfig(level=loglevels[args.verbose])
 
+    # check internet connection with icelines file service
+    HOST = 'https://download.geoservice.dlr.de/icelines/files/'
+
     # try to run the program with listed parameters
     try:
         info(args)
+        pointAdvection.utilities.check_connection(HOST)
         # run program with parameters
         mask_ice_fronts(args.directory, args.region,
             velocity_file=args.velocity_file,
@@ -338,12 +376,13 @@ def main():
             years=args.year,
             buffer=args.buffer,
             method=args.interpolate,
+            timeout=args.timeout,
             mode=args.mode)
-    except Exception as e:
+    except Exception as exc:
         # if there has been an error exception
         # print the type, value, and stack trace of the
         # current exception being handled
-        logging.critical('process id {0:d} failed'.format(os.getpid()))
+        logging.critical(f'process id {os.getpid():d} failed')
         logging.error(traceback.format_exc())
 
 # run main program

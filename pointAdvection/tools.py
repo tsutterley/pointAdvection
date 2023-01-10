@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 tools.py
-Written by Tyler Sutterley (06/2022)
+Written by Tyler Sutterley (12/2022)
 Plotting tools for visualization
 
 PYTHON DEPENDENCIES:
@@ -13,6 +13,7 @@ PYTHON DEPENDENCIES:
         https://github.com/matplotlib/matplotlib
 
 UPDATE HISTORY:
+    Updated 12/2022: use f-strings for ascii and verbose formatting
     Written 06/2022
 """
 import os
@@ -40,7 +41,7 @@ def from_cpt(filename, use_extremes=True, **kwargs):
     """
 
     # read the cpt file and get contents
-    with open(filename,'r') as f:
+    with open(filename, mode='r', encoding='utf8') as f:
         file_contents = f.read().splitlines()
     # extract basename from cpt filename
     name = re.sub(r'\.cpt','',os.path.basename(filename),flags=re.I)
@@ -194,7 +195,7 @@ def custom_colormap(N, map_name, **kwargs):
         for i in range(N):
             color_map[i,:] = colorsys.hsv_to_rgb(h[i],s[i],v[i])
     else:
-        raise ValueError('Incorrect color map specified ({0})'.format(map_name))
+        raise ValueError(f'Unknown color map {map_name}')
 
     # output RGB lists containing normalized location and colors
     Xnorm = len(color_map) - 1.0
