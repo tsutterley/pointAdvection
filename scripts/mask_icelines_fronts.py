@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 u"""
-mask_ice_fronts.py
+mask_icelines_fronts.py
 Written by Tyler Sutterley (01/2023)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
@@ -89,7 +89,7 @@ def geoservice_list(region_url, retries=5, **kwargs):
     raise RuntimeError('End of Retries')
 
 # PURPOSE: create time-variable ice front masks
-def mask_ice_fronts(base_dir, regions,
+def mask_icelines_fronts(base_dir, regions,
     velocity_file=None,
     mask_file=None,
     epoch=None,
@@ -369,7 +369,7 @@ def main():
         info(args)
         pointAdvection.utilities.check_connection(HOST)
         # run program with parameters
-        mask_ice_fronts(args.directory, args.region,
+        mask_icelines_fronts(args.directory, args.region,
             velocity_file=args.velocity_file,
             mask_file=args.mask_file,
             epoch=args.epoch,
