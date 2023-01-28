@@ -14,6 +14,7 @@ COMMAND LINE OPTIONS:
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
     -Y X, --year X: Years of ice front data to run
+    -i X, --interval X: Time inverval of ice front data to run
     -B X, --buffer X: Distance in kilometers to buffer extents
     -I X, --interpolate X: Interpolation method
         spline
@@ -26,6 +27,7 @@ COMMAND LINE OPTIONS:
 
 UPDATE HISTORY:
     Updated 01/2023: add option for setting connection timeout
+        added option for running monthly ice front data
     Updated 12/2022: using virtual file systems to access files
     Written 08/2022
 """
@@ -94,7 +96,9 @@ def mask_icelines_fronts(base_dir, regions,
     mask_file=None,
     epoch=None,
     years=None,
+    interval=None,
     buffer=0,
+    density=10,
     method=None,
     timeout=None,
     mode=None):
@@ -109,34 +113,36 @@ def mask_icelines_fronts(base_dir, regions,
     minx, miny, maxx, maxy = np.inf, np.inf, -np.inf, -np.inf
     # regular expression pattern for finding files and
     # extracting information from file names
-    regex_years = r'|'.join(f'{y:d}' for y in years) if years else r'\d+'
-    regex_pattern = rf'(.*?)_({regex_years})(\d{{2}})(\d{{2}})_(.*?)-(.*?).gpkg$'
+    regex_years = r'|'.join(f'{y:d}' for y in years) if years else r'\d{4}'
+    regex_pattern = rf'(.*?)_({regex_years})(\d{{2}})(\d{{2}})?[_]?(.*?)-(.*?).gpkg$'
     rx = re.compile(regex_pattern, re.VERBOSE)
 
     # get all available regions from icelines service
-    HOST = ['https://download.geoservice.dlr.de','icelines','files']
+    HOST = ['https://download.geoservice.dlr.de', 'icelines', 'files']
     if (regions is None):
         colnames,_ = geoservice_list(HOST, pattern=r'[\w]\/',
             sort=True, timeout=timeout)
-        regions = [r.replace(posixpath.sep,'') for r in colnames]
+        regions = [r.replace(posixpath.sep, '') for r in colnames]
 
     # for each region to read
     for region in regions:
         # url for region
-        region_url = [*HOST, region, 'daily', 'fronts']
+        region_url = [*HOST, region, interval, 'fronts']
         colnames,_ = geoservice_list(region_url, pattern=regex_pattern,
             sort=True, timeout=timeout)
         # for each regional file
         for f in colnames:
             # extract information from file
             SAT, YY, MM, DD, ID, ICES = rx.findall(f).pop()
+            # use the start of the month for monthly data
+            DD = '01' if not DD else DD
             # create list for day
             if f'{YY}-{MM}-{DD}' not in ice_front_files.keys():
                 ice_front_files[f'{YY}-{MM}-{DD}'] = []
             # try to extract the bounds of the dataset
             try:
                 # read file to extract bounds
-                mmap_name = posixpath.join('/vsicurl',*region_url,f)
+                mmap_name = posixpath.join('/vsicurl', *region_url, f)
                 ds = fiona.open(mmap_name)
                 # coordinate reference system of file
                 crs = pyproj.CRS.from_string(ds.crs['init'])
@@ -160,17 +166,17 @@ def mask_icelines_fronts(base_dir, regions,
     # calculate buffered limits of x and y
     xlimits = (minx - 1e3*buffer, maxx + 1e3*buffer)
     ylimits = (miny - 1e3*buffer, maxy + 1e3*buffer)
+    logging.info(f'x-limits: {xlimits[0]:0.0f} {xlimits[1]:0.0f}')
+    logging.info(f'y-limits: {ylimits[0]:0.0f} {ylimits[1]:0.0f}')
     # scale for converting from m/yr to m/s
     scale = 1.0/31557600.0
     # time steps to calculate advection
     step = 86400.0
-    # distance to densify geometry along path
-    distance = 10
 
     # create advection object with interpolated velocities
     kwargs = dict(integrator='RK4', method=method)
     adv = pointAdvection.advection(**kwargs).from_nc(
-        velocity_file, bounds=[xlimits,ylimits],
+        velocity_file, bounds=[xlimits, ylimits],
         field_mapping=dict(U='vx', V='vy'), scale=scale)
 
     # read initial mask
@@ -222,7 +228,7 @@ def mask_icelines_fronts(base_dir, regions,
                 for geo in val['geometry']['coordinates']:
                     line = shapely.geometry.LineString(geo)
                     # calculate the distances along the line string at spacing
-                    distances = np.arange(0, line.length, distance)
+                    distances = np.arange(0, line.length, density)
                     # interpolate along path to densify the geometry
                     points = [line.interpolate(d) for d in distances] + \
                         [line.boundary[1]]
@@ -327,10 +333,18 @@ def arguments():
     parser.add_argument('--year','-Y',
         type=int, nargs='+',
         help='Years of ice front data to run')
+    # Time interval of ice front data to run
+    parser.add_argument('--interval','-i',
+        metavar='INTERVAL', type=str, choices=('daily','monthly'),
+        help='Time inverval of ice front data to run')
     # extent buffer
     parser.add_argument('--buffer','-B',
         type=float, default=5.0,
         help='Distance in kilometers to buffer extents')
+    # distance to densify geometry along path
+    parser.add_argument('--density','-d',
+        type=float, default=10.0,
+        help='Distance in meters to densify geometry along path')
     # interpolation method
     parser.add_argument('--interpolate','-I',
         metavar='METHOD', type=str, default='spline',
@@ -374,7 +388,9 @@ def main():
             mask_file=args.mask_file,
             epoch=args.epoch,
             years=args.year,
+            interval=args.interval,
             buffer=args.buffer,
+            density=args.density,
             method=args.interpolate,
             timeout=args.timeout,
             mode=args.mode)
