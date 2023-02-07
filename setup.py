@@ -15,11 +15,17 @@ with open("README.rst", mode="r", encoding='utf8') as fh:
     long_description = fh.read()
 long_description_content_type = "text/x-rst"
 
-# get install requirements
-with open('requirements.txt', encoding='utf8') as fh:
-    install_requires = [line.split().pop(0) for line in fh.read().splitlines()]
-# dependency links
-dependency_links = ['https://github.com/smithb/pointCollection/tarball/tarball/main']
+# install requirements and dependencies
+on_rtd = os.environ.get('READTHEDOCS') == 'True'
+if on_rtd:
+    install_requires = []
+    dependency_links = []
+else:
+    # get install requirements
+    with open('requirements.txt', encoding='utf8') as fh:
+        install_requires = [line.split().pop(0) for line in fh.read().splitlines()]
+    # dependency links
+    dependency_links = ['https://github.com/smithb/pointCollection/tarball/tarball/main']
 
 # get version
 with open('version.txt', encoding='utf8') as fh:
@@ -37,7 +43,7 @@ gdal_output = [None] * 4
 try:
     for i, flag in enumerate(("--cflags", "--libs", "--datadir", "--version")):
         gdal_output[i] = check_output(['gdal-config', flag]).strip()
-except:
+except Exception as e:
     log.warning('Failed to get options via gdal-config')
 else:
     log.info(f"GDAL version from via gdal-config: {gdal_output[3]}")

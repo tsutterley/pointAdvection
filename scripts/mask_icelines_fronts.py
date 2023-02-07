@@ -166,8 +166,6 @@ def mask_icelines_fronts(base_dir, regions,
     # calculate buffered limits of x and y
     xlimits = (minx - 1e3*buffer, maxx + 1e3*buffer)
     ylimits = (miny - 1e3*buffer, maxy + 1e3*buffer)
-    logging.info(f'x-limits: {xlimits[0]:0.0f} {xlimits[1]:0.0f}')
-    logging.info(f'y-limits: {ylimits[0]:0.0f} {ylimits[1]:0.0f}')
     # scale for converting from m/yr to m/s
     scale = 1.0/31557600.0
     # time steps to calculate advection
@@ -184,10 +182,13 @@ def mask_icelines_fronts(base_dir, regions,
         bounds=[xlimits, ylimits])
     mask.z = np.nan_to_num(mask.z, nan=0)
     mask.z = mask.z.astype(bool)
-    # extent of mask dataset
+    # extent and spacing of mask dataset
     xmin, xmax, ymin, ymax = np.copy(mask.extent)
     dx, = np.abs(np.diff(mask.x[0:2]))
     dy, = np.abs(np.diff(mask.y[0:2]))
+    logging.info(f'x-limits: {xmin:0.0f} {xmax:0.0f}')
+    logging.info(f'y-limits: {ymin:0.0f} {ymax:0.0f}')
+    logging.info(f'spacing: {dx:0.0f},{dy:0.0f}')
 
     # start and end time for forward and backwards advection
     start_date = None
@@ -335,7 +336,8 @@ def arguments():
         help='Years of ice front data to run')
     # Time interval of ice front data to run
     parser.add_argument('--interval','-i',
-        metavar='INTERVAL', type=str, choices=('daily','monthly'),
+        metavar='INTERVAL', type=str,
+        choices=('daily','monthly'), default='daily',
         help='Time inverval of ice front data to run')
     # extent buffer
     parser.add_argument('--buffer','-B',
