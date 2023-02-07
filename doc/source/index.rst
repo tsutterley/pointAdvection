@@ -34,4 +34,5 @@ Utilities for advecting point data for use in a Lagrangian reference frame
     :hidden:
     :caption: Use Cases
 
-    api_reference/mask_ice_fronts.rst
+    api_reference/mask_icelines_fronts.rst
+    api_reference/combine_icelines_fronts.rst
