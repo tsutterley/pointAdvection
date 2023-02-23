@@ -52,7 +52,7 @@ import matplotlib.tri as mtri
 # attempt imports
 try:
     import pointCollection as pc
-except (ImportError, ModuleNotFoundError) as e:
+except (ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pointCollection not available", ImportWarning)
 # ignore warnings
@@ -575,7 +575,7 @@ class advection():
         """
         try:
             dist = np.sqrt((self.x0 - self.x)**2 + (self.y0 - self.y)**2)
-        except Exception as e:
+        except Exception as exc:
             return None
         else:
             return dist

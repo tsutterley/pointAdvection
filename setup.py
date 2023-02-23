@@ -43,7 +43,7 @@ gdal_output = [None] * 4
 try:
     for i, flag in enumerate(("--cflags", "--libs", "--datadir", "--version")):
         gdal_output[i] = check_output(['gdal-config', flag]).strip()
-except Exception as e:
+except Exception as exc:
     log.warning('Failed to get options via gdal-config')
 else:
     log.info(f"GDAL version from via gdal-config: {gdal_output[3]}")
