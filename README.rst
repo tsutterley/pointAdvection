@@ -12,7 +12,7 @@ pointAdvection
 .. |License| image:: https://img.shields.io/badge/license-MIT-green.svg
    :target: https://github.com/tsutterley/pointAdvection/blob/main/LICENSE
 
-.. |Documentation Status| image:: https://readthedocs.org/projects/pointAdvection/badge/?version=latest
+.. |Documentation Status| image:: https://readthedocs.org/projects/pointadvection/badge/?version=latest
    :target: https://pointadvection.readthedocs.io/en/latest/?badge=latest
 
 Utilities for advecting point data for use in a Lagrangian reference frame
