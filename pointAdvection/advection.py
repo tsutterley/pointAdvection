@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (10/2022)
+Written by Tyler Sutterley (03/2023)
 Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
@@ -22,6 +22,7 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 03/2023: added function for extracting from a dictionary
     Updated 10/2022: added option to plot divergence of velocity field
         added streaklines based on a velocity field
     Updated 08/2022: verify datatype of imported velocity fields
@@ -37,6 +38,7 @@ UPDATE HISTORY:
         added adaptive Runge-Kutta-Fehlberg method
     Written 01/2018
 """
+from __future__ import annotations
 
 import os
 import io
@@ -64,17 +66,17 @@ class advection():
 
     Attributes
     ----------
-    x: float
+    x: np.ndarray
         x-coordinates
-    y: float
+    y: np.ndarray
         y-coordinates
-    t: float
+    t: np.ndarray
         time coordinates
-    x0: float or NoneType, default None
+    x0: np.ndarray or NoneType, default None
         Final x-coordinate after advection
-    y0: float or NoneType, default None
+    y0: np.ndarray or NoneType, default None
         Final y-coordinate after advection
-    t0: float, default 0.0
+    t0: np.ndarray or float, default 0.0
         Ending time for advection
     velocity: obj
         ``pointCollection`` object of velocity fields
@@ -137,7 +139,7 @@ class advection():
             self.streak['y'] += [self.y0.copy()]
             self.streak['t'] += [t.copy()]
 
-    def case_insensitive_filename(self, filename):
+    def case_insensitive_filename(self, filename: str | io.BytesIO):
         """
         Searches a directory for a filename without case dependence
 
@@ -167,8 +169,12 @@ class advection():
         return self
 
     # PURPOSE: read geotiff velocity file and extract x and y velocities
-    def from_geotiff(self, filename, bounds=None, buffer=5e4,
-        scale=1.0/31557600.0):
+    def from_geotiff(self,
+            filename: str | io.IOBase,
+            bounds: list | np.ndarray | None = None,
+            buffer: float | None = 5e4,
+            scale: float = 1.0/31557600.0
+        ):
         """
         Read geotiff velocity file and extract x and y velocities
 
@@ -179,8 +185,8 @@ class advection():
         bounds: list or NoneType, default None
             boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
 
-            If not specified, read around input points
-        buffer: float, default 5e4
+            If not specified, can read around input points
+        buffer: float or NoneType, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
@@ -190,7 +196,7 @@ class advection():
         # find input geotiff velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        if bounds is None:
+        if (bounds is None) and (buffer is not None):
             bounds = self.buffered_bounds(buffer)
         # read input velocity file from geotiff
         UV = pc.grid.data().from_geotif(self.filename,
@@ -210,8 +216,14 @@ class advection():
         return self
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
-    def from_nc(self, filename, field_mapping=dict(U='VX', V='VY'),
-        group=None, bounds=None, buffer=5e4, scale=1.0/31557600.0):
+    def from_nc(self,
+            filename: str | io.IOBase,
+            field_mapping: dict = dict(U='VX', V='VY'),
+            group: str or None = None,
+            bounds: list | np.ndarray | None = None,
+            buffer: float | None = 5e4,
+            scale: float = 1.0/31557600.0
+        ):
         """
         Read netCDF4 velocity file and extract x and y velocities
 
@@ -226,8 +238,8 @@ class advection():
         bounds: list or NoneType, default None
             boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
 
-            If not specified, read around input points
-        buffer: float, default 5e4
+            If not specified, can read around input points
+        buffer: float or NoneType, default 5e4
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
@@ -237,7 +249,7 @@ class advection():
         # find input netCDF4 velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        if bounds is None:
+        if (bounds is None) and (buffer is not None):
             bounds = self.buffered_bounds(buffer)
         # read input velocity file from netCDF4
         self.velocity = pc.grid.data().from_nc(self.filename,
@@ -248,6 +260,12 @@ class advection():
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
+            # check if velocity has error components
+            if hasattr(self.velocity, 'eU'):
+                self.velocity.eU = np.transpose(self.velocity.eU, axes=(1,2,0))
+            if hasattr(self.velocity, 'eV'):
+                self.velocity.eV = np.transpose(self.velocity.eV, axes=(1,2,0))
+            # update time dimension axis
             self.velocity.t_axis = 2
         # create mask for invalid velocity points
         mask = ((self.velocity.U.data == self.velocity.fill_value) & \
@@ -257,9 +275,90 @@ class advection():
         # use scale to convert from m/yr to m/s
         self.velocity.U = scale*np.array(self.velocity.U, dtype=float)
         self.velocity.V = scale*np.array(self.velocity.V, dtype=float)
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU = scale*np.array(self.velocity.eU, dtype=float)
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV = scale*np.array(self.velocity.eV, dtype=float)
         # update fill values in velocity grids
         self.velocity.U[mask] = self.fill_value
         self.velocity.V[mask] = self.fill_value
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU[mask] = self.fill_value
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV[mask] = self.fill_value
+        # set the spacing of grid
+        dx = self.velocity.x[1] - self.velocity.x[0]
+        dy = self.velocity.y[1] - self.velocity.y[0]
+        setattr(self.velocity, 'spacing', (dx, dy))
+        setattr(self.velocity, 'type', 'grid')
+        return self
+
+    # PURPOSE: create an advection object from an input dictionary
+    def from_dict(self,
+            D_dict: dict,
+            bounds: list | np.ndarray | None = None,
+            buffer: float | None = None,
+            scale: float = 1.0/31557600.0,
+            t_axis: int = 0
+        ):
+        """
+        Create an advection object from an input dictionary
+
+        Parameters
+        ----------
+        D_dict: dict
+            Dictionary of advection grid variables
+        bounds: list or NoneType, default None
+            boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
+
+            If not specified, can read around input points
+        buffer: float or NoneType, default None
+            Buffer around input points for extracting velocity fields
+        scale: float, default 1.0/31557600.0
+            scaling factor for converting velocities to m/s
+
+            defaults to converting from m/yr
+        """
+        # read input velocity file from netCDF4
+        self.velocity = pc.grid.data(t_axis=t_axis).from_dict(D_dict)
+        # x and y limits (buffered maximum and minimum)
+        if (bounds is None) and (buffer is not None):
+            # x and y limits (buffered maximum and minimum)
+            bounds = self.buffered_bounds(buffer)
+        # crop grid data to bounds
+        if bounds is not None:
+            self.velocity.crop(bounds[0], bounds[1])
+        # swap orientation of axes
+        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
+            self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
+            self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
+            # check if velocity has error components
+            if hasattr(self.velocity, 'eU'):
+                self.velocity.eU = np.transpose(self.velocity.eU, axes=(1,2,0))
+            if hasattr(self.velocity, 'eV'):
+                self.velocity.eV = np.transpose(self.velocity.eV, axes=(1,2,0))
+            # update time dimension axis
+            self.velocity.t_axis = 2
+        # create mask for invalid velocity points
+        mask = ((self.velocity.U.data == self.velocity.fill_value) & \
+            (self.velocity.V.data == self.velocity.fill_value))
+        # check if any grid values are nan
+        mask |= np.isnan(self.velocity.U.data) | np.isnan(self.velocity.V.data)
+        # use scale to convert from m/yr to m/s
+        self.velocity.U = scale*np.array(self.velocity.U, dtype=float)
+        self.velocity.V = scale*np.array(self.velocity.V, dtype=float)
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU = scale*np.array(self.velocity.eU, dtype=float)
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV = scale*np.array(self.velocity.eV, dtype=float)
+        # update fill values in velocity grids
+        self.velocity.U[mask] = self.fill_value
+        self.velocity.V[mask] = self.fill_value
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU[mask] = self.fill_value
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV[mask] = self.fill_value
         # set the spacing of grid
         dx = self.velocity.x[1] - self.velocity.x[0]
         dy = self.velocity.y[1] - self.velocity.y[0]
@@ -268,8 +367,13 @@ class advection():
         return self
 
     # PURPOSE: build a data object from a list of other data objects
-    def from_list(self, D_list, sort=False, bounds=None, buffer=5e4,
-        scale=1.0/31557600.0):
+    def from_list(self,
+            D_list: list,
+            sort: bool = False,
+            bounds: list | np.ndarray | None = None,
+            buffer: float | None = None,
+            scale: float = 1.0/31557600.0,
+        ):
         """
         Build a data object from a list of other data objects
 
@@ -282,8 +386,8 @@ class advection():
         bounds: list or NoneType, default None
             boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
 
-            If not specified, read around input points
-        buffer: float, default 5e4
+            If not specified, can read around input points
+        buffer: float or NoneType, default None
             Buffer around input points for extracting velocity fields
         scale: float, default 1.0/31557600.0
             scaling factor for converting velocities to m/s
@@ -291,25 +395,41 @@ class advection():
             defaults to converting from m/yr
         """
         # x and y limits (buffered maximum and minimum)
-        if bounds is None:
+        if (bounds is None) and (buffer is not None):
+            # x and y limits (buffered maximum and minimum)
             bounds = self.buffered_bounds(buffer)
         # read input velocity data from grid objects
         self.velocity = pc.grid.data().from_list(D_list, sort=sort)
         # crop grid data to bounds
-        self.velocity.crop(bounds[0],bounds[1])
+        if bounds is not None:
+            self.velocity.crop(bounds[0], bounds[1])
         # swap orientation of axes
         setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
+            # check if velocity has error components
+            if hasattr(self.velocity, 'eU'):
+                self.velocity.eU = np.transpose(self.velocity.eU, axes=(1,2,0))
+            if hasattr(self.velocity, 'eV'):
+                self.velocity.eV = np.transpose(self.velocity.eV, axes=(1,2,0))
+            # update time dimension axis
             self.velocity.t_axis = 2
         # use scale to convert from m/yr to m/s
         self.velocity.U *= scale
         self.velocity.V *= scale
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU = scale*np.array(self.velocity.eU, dtype=float)
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV = scale*np.array(self.velocity.eV, dtype=float)
         # update fill values in velocity grids
         mask = np.isnan(self.velocity.U) | np.isnan(self.velocity.V)
         self.velocity.U[mask] = self.fill_value
         self.velocity.V[mask] = self.fill_value
+        if hasattr(self.velocity, 'eU'):
+            self.velocity.eU[mask] = self.fill_value
+        if hasattr(self.velocity, 'eV'):
+            self.velocity.eV[mask] = self.fill_value
         # set the spacing of grid
         dx = self.velocity.x[1] - self.velocity.x[0]
         dy = self.velocity.y[1] - self.velocity.y[0]
@@ -512,19 +632,24 @@ class advection():
         return self
 
     # PURPOSE: calculates X and Y velocities for Runge-Kutta-Fehlberg 4(5) method
-    def RFK45_velocities(self, xi, yi, dt, **kwargs):
+    def RFK45_velocities(self,
+            xi: np.ndarray,
+            yi: np.ndarray,
+            dt: np.ndarray,
+            **kwargs
+        ):
         """
         Calculates X and Y velocities for Runge-Kutta-Fehlberg 4(5) method
 
         Parameters
         ----------
-        xi: float
+        xi: np.ndarray
             x-coordinates
-        yi: float
+        yi: np.ndarray
             y-coordinates
-        dt: float
+        dt: np.ndarray
             integration time step size
-        t: float or NoneType, default None
+        t: np.ndarray or NoneType, default None
             time coordinates
         """
         kwargs.setdefault('t', None)
@@ -570,7 +695,7 @@ class advection():
 
         Returns
         -------
-        dist: float
+        dist: np.ndarray
             Eulerian distance between start and end points
         """
         try:
@@ -581,15 +706,19 @@ class advection():
             return dist
 
     # PURPOSE: check a specified 2D point is inside a specified 2D polygon
-    def inside_polygon(self, x, y, threshold=0.01):
+    def inside_polygon(self,
+            x: np.ndarray,
+            y: np.ndarray,
+            threshold: float = 0.01
+        ):
         """
         Indicates whether a specified 2D point is inside a specified 2D polygon
 
         Parameters
         ----------
-        x: float
+        x: np.ndarray
             x-coordinates to query
-        y: float
+        y: np.ndarray
             y-coordinates to query
         threshold: float, default 0.01
             Minimum angle for checking if inside polygon
@@ -666,9 +795,9 @@ class advection():
 
         Returns
         -------
-        U: float
+        U: np.ndarray
             Velocity in x-direction
-        V: float
+        V: np.ndarray
             Velocity in y-direction
         """
         if (self.method == 'bilinear'):
@@ -689,18 +818,18 @@ class advection():
 
         Parameters
         ----------
-        x: float or NoneType, default None
+        x: np.ndarray or NoneType, default None
             x-coordinates
-        y: float or NoneType, default None
+        y: np.ndarray or NoneType, default None
             y-coordinates
         fill_value: float, default np.nan
             Invalid value
 
         Returns
         -------
-        U: float
+        U: np.ndarray
             Velocity in x-direction
-        V: float
+        V: np.ndarray
             Velocity in y-direction
         """
         # set default keyword options
@@ -747,9 +876,9 @@ class advection():
 
         Parameters
         ----------
-        x: float or NoneType, default None
+        x: np.ndarray or NoneType, default None
             x-coordinates
-        y: float or NoneType, default None
+        y: np.ndarray or NoneType, default None
             y-coordinates
         kx: int, default 1
             degrees of the bivariate spline in x-direction
@@ -760,9 +889,9 @@ class advection():
 
         Returns
         -------
-        U: float
+        U: np.ndarray
             Velocity in x-direction
-        V: float
+        V: np.ndarray
             Velocity in y-direction
         """
         # set default keyword options
@@ -823,11 +952,11 @@ class advection():
 
         Parameters
         ----------
-        x: float or NoneType, default None
+        x: np.ndarray or NoneType, default None
             x-coordinates
-        y: float or NoneType, default None
+        y: np.ndarray or NoneType, default None
             y-coordinates
-        t: float or NoneType, default None
+        t: np.ndarray or NoneType, default None
             time coordinates
         method: str
             Method of regular grid interpolation
@@ -839,9 +968,9 @@ class advection():
 
         Returns
         -------
-        U: float
+        U: np.ndarray
             Velocity in x-direction
-        V: float
+        V: np.ndarray
             Velocity in y-direction
         """
         # set default keyword options
@@ -890,11 +1019,11 @@ class advection():
 
         Parameters
         ----------
-        x: float or NoneType, default None
+        x: np.ndarray or NoneType, default None
             x-coordinates
-        y: float or NoneType, default None
+        y: np.ndarray or NoneType, default None
             y-coordinates
-        t: float or NoneType, default None
+        t: np.ndarray or NoneType, default None
             time coordinates
         method: str
             Method of unstructured interpolation
@@ -910,9 +1039,9 @@ class advection():
 
         Returns
         -------
-        U: float
+        U: np.ndarray
             Velocity in x-direction
-        V: float
+        V: np.ndarray
             Velocity in y-direction
         """
         # set default keyword options
@@ -1006,7 +1135,10 @@ class advection():
     # Attempt 2: rescale and center the inputs with option QbB
     # Attempt 3: joggle the inputs to find a triangulation with option QJ
     # if no passing triangulations: exit with empty list
-    def find_valid_triangulation(self, x0, y0):
+    def find_valid_triangulation(self,
+            x: np.ndarray,
+            y: np.ndarray
+        ):
         """
         Attempt to find a valid Delaunay triangulation for coordinates
 
@@ -1016,9 +1148,9 @@ class advection():
 
         Parameters
         ----------
-        x0: float
+        x: np.ndarray
             x-coordinates for mesh
-        y0: float
+        y: np.ndarray
             y-coordinates for mesh
         """
         # Attempt 1: try with standard options Qt Qbb Qc Qz
@@ -1039,7 +1171,7 @@ class advection():
         # try each set of qhull_options
         for i,qhull_option in enumerate(['Qt Qbb Qc Qz','Qt Qc QbB','QJ QbB']):
             try:
-                triangle = scipy.spatial.Delaunay(np.c_[x0, y0],
+                triangle = scipy.spatial.Delaunay(np.c_[x, y],
                     qhull_options=qhull_option)
             except scipy.spatial.qhull.QhullError:
                 pass
@@ -1049,15 +1181,18 @@ class advection():
         raise scipy.spatial.qhull.QhullError
 
     # PURPOSE: check a specified 2D point is inside the convex hull of a mesh
-    def inside_simplex(self, x, y):
+    def inside_simplex(self,
+            x: np.ndarray,
+            y: np.ndarray
+        ):
         """
         Indicates whether a specified 2D point is inside the convex hull of a mesh
 
         Parameters
         ----------
-        x: float
+        x: np.ndarray
             x-coordinates to query
-        y: float
+        y: np.ndarray
             y-coordinates to query
 
         Returns
@@ -1076,24 +1211,31 @@ class advection():
 
     # PURPOSE: calculates the maximum angle within a triangle given the
     # coordinates of the triangles vertices A(x,y), B(x,y), C(x,y)
-    def triangle_maximum_angle(self, Ax, Ay, Bx, By, Cx, Cy):
+    def triangle_maximum_angle(self,
+            Ax: np.ndarray,
+            Ay: np.ndarray,
+            Bx: np.ndarray,
+            By: np.ndarray,
+            Cx: np.ndarray,
+            Cy: np.ndarray
+        ):
         """
         Calculates the maximum angles within triangles with
         vertices A, B and C
 
         Parameters
         ----------
-        Ax: float
+        Ax: np.ndarray
             x-coordinates of A vertices
-        Ay: float
+        Ay: np.ndarray
             y-coordinates of A vertices
-        Bx: float
+        Bx: np.ndarray
             x-coordinates of B vertices
-        By: float
+        By: np.ndarray
             y-coordinates of B vertices
-        Cx: float
+        Cx: np.ndarray
             x-coordinates of C vertices
-        Cy: float
+        Cy: np.ndarray
             y-coordinates of C vertices
         """
         # calculate sides of triangle (opposite interior angle at vertex)
