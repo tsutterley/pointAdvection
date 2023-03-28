@@ -23,6 +23,9 @@ PYTHON DEPENDENCIES:
 
 UPDATE HISTORY:
     Updated 03/2023: added function for extracting from a dictionary
+        verify input times are float64 arrays
+        set default interpolator to linear regular grid
+        add case for using regular grid interpolation with 2d velocities
     Updated 10/2022: added option to plot divergence of velocity field
         added streaklines based on a velocity field
     Updated 08/2022: verify datatype of imported velocity fields
@@ -93,7 +96,7 @@ class advection():
             - ``'euler'``
             - ``'RK4'``
             - ``'RKF45'``
-    method: str
+    method: str, default 'linear'
         Interpolation method for velocities
 
             - ``'bilinear'``: quick bilinear interpolation
@@ -113,15 +116,15 @@ class advection():
         kwargs.setdefault('t', None)
         kwargs.setdefault('t0', 0.0)
         kwargs.setdefault('integrator', 'RK4')
-        kwargs.setdefault('method', 'bilinear')
+        kwargs.setdefault('method', 'linear')
         kwargs.setdefault('fill_value', np.nan)
         # set default class attributes
         self.x=np.atleast_1d(kwargs['x']).astype('f8')
         self.y=np.atleast_1d(kwargs['y']).astype('f8')
-        self.t=kwargs['t']
+        self.t=np.array(kwargs['t'], dtype='f8')
         self.x0=None
         self.y0=None
-        self.t0=kwargs['t0']
+        self.t0=np.array(kwargs['t0'], dtype='f8')
         self.velocity=None
         self.streak={'x':[], 'y':[],'t':[]}
         self.filename=None
@@ -947,8 +950,9 @@ class advection():
     # PURPOSE: use regular grid interpolation of velocities to coordinates
     def regular_grid_interpolation(self, **kwargs):
         """
-        Regular grid interpolation of time-variable U and V velocities
-            to coordinates and times
+        Interpolate U and V velocities to coordinates using
+            regular grid interpolation
+        Can use time-variable ``U`` and ``V`` velocities
 
         Parameters
         ----------
@@ -990,7 +994,7 @@ class advection():
         if not np.any(v) and not np.any(v == 0):
             return (U, V)
         # build regular grid interpolants for input grid
-        if not self.interpolant:
+        if not self.interpolant and (self.velocity.ndim == 3):
             # use scipy regular grid to interpolate values for a given method
             # will extrapolate velocities forward in time if outside range
             self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
@@ -1001,11 +1005,25 @@ class advection():
                 (self.velocity.y, self.velocity.x, self.velocity.time),
                 self.velocity.V, method=kwargs['method'], bounds_error=False,
                 fill_value=None)
+        elif not self.interpolant and (self.velocity.ndim == 2):
+            # use scipy regular grid to interpolate values for a given method
+            self.interpolant['U'] = scipy.interpolate.RegularGridInterpolator(
+                (self.velocity.y, self.velocity.x), self.velocity.U,
+                method=kwargs['method'], bounds_error=False, fill_value=None)
+            self.interpolant['V'] = scipy.interpolate.RegularGridInterpolator(
+                (self.velocity.y, self.velocity.x), self.velocity.V,
+                method=kwargs['method'], bounds_error=False, fill_value=None)
         # calculate interpolated data
-        U[v] = self.interpolant['U'].__call__(
-            np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
-        V[v] = self.interpolant['V'].__call__(
-            np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
+        if (self.velocity.ndim == 3):
+            U[v] = self.interpolant['U'].__call__(
+                np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
+            V[v] = self.interpolant['V'].__call__(
+                np.c_[kwargs['y'][v],kwargs['x'][v],kwargs['t'][v]])
+        elif (self.velocity.ndim == 2):
+            U[v] = self.interpolant['U'].__call__(
+                np.c_[kwargs['y'][v],kwargs['x'][v]])
+            V[v] = self.interpolant['V'].__call__(
+                np.c_[kwargs['y'][v],kwargs['x'][v]])
         # replace invalid values with fill value
         U = np.nan_to_num(U, nan=kwargs['fill_value'])
         V = np.nan_to_num(V, nan=kwargs['fill_value'])
