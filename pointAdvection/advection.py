@@ -214,8 +214,12 @@ class advection():
         dx = self.velocity.x[1] - self.velocity.x[0]
         dy = self.velocity.y[1] - self.velocity.y[0]
         setattr(self.velocity, 'spacing', (dx, dy))
-        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         setattr(self.velocity, 'type', 'grid')
+        # attempt to set dimensions if not current attribute
+        try:
+            setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        except AttributeError as exc:
+            pass
         return self
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
@@ -258,8 +262,12 @@ class advection():
         self.velocity = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
             bounds=bounds)
+        # attempt to set dimensions if not current attribute
+        try:
+            setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        except AttributeError as exc:
+            pass
         # swap orientation of axes
-        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
@@ -331,8 +339,12 @@ class advection():
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
+        # attempt to set dimensions if not current attribute
+        try:
+            setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        except AttributeError as exc:
+            pass
         # swap orientation of axes
-        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
@@ -406,8 +418,12 @@ class advection():
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
+        # attempt to set dimensions if not current attribute
+        try:
+            setattr(self.velocity, 'ndim', self.velocity.U.ndim)
+        except AttributeError as exc:
+            pass
         # swap orientation of axes
-        setattr(self.velocity, 'ndim', self.velocity.U.ndim)
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
             self.velocity.U = np.transpose(self.velocity.U, axes=(1,2,0))
             self.velocity.V = np.transpose(self.velocity.V, axes=(1,2,0))
