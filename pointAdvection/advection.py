@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley (03/2023)
+Written by Tyler Sutterley and Ben Smith (05/2023)
 Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
@@ -22,6 +22,8 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 05/2023: add fill gaps function and xy0 interpolator
+        add option to advect parcels to set the number of steps directly
     Updated 03/2023: added function for extracting from a dictionary
         verify input times are float64 arrays
         set default interpolator to linear regular grid
@@ -131,6 +133,7 @@ class advection():
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
+        self.xy0_interpolator=None
         self.fill_value=kwargs['fill_value']
 
     def __update_streak__(self, t, **kwargs):
@@ -456,6 +459,126 @@ class advection():
         setattr(self.velocity, 'type', 'grid')
         return self
 
+    # PURPOSE: fill in holes in velocity maps
+    def fill_velocity_gaps(self):
+        """
+        Fill in gaps in the velocity field.
+
+        First, check if the velocity at a point and time can be filled from the
+        velocity in a previous or subsequent year, or from the average of the
+        previous and subsequent years.  If not, fill the velocity with the mean
+        velocity field.
+
+        Returns
+        -------
+        None.
+
+        """
+        # calculate an error-weighted average of the velocities
+        v=self.velocity.copy()
+        wU=1/v.eU**2/np.nansum(1/v.eU**2, axis=2)[:,:,None]
+        wV=1/v.eV**2/np.nansum(1/v.eV**2, axis=2)[:,:,None]
+        vbar=pc.grid.data().from_dict({'x':np.array(v.x),
+                               'y':np.array(v.y),
+                               'U':np.nansum(wU*v.U, axis=2),
+                               'V':np.nansum(wV*v.V, axis=2)})
+
+        # attempt to fill in gaps in each velocity field with the average of
+        # the velocity from one year prior and that from one year later.
+        # if one or the other of these is missing, use valid values from the
+        # slice that is present.
+        v_filled=self.velocity.copy()
+
+        delta_year=float(24*3600*365)
+        delta_tol = 24*3600*365/8
+
+        for ii in range(v.U.shape[2]-1):
+            this_U=v.U[:,:,ii].copy()
+            this_V=v.V[:,:,ii].copy()
+            u_temp = np.zeros_like(this_U)
+            v_temp = np.zeros_like(this_U)
+            w_temp = np.zeros_like(this_U)
+            for dt in [-delta_tol, delta_tol]:
+                other_year = np.argmin(np.abs(v.time[ii]+delta_year-v.time))
+                if np.abs((v.time[other_year]-v.time[ii]).astype(float)) > delta_tol:
+                    continue
+                good = np.isfinite(v.U[:,:,other_year])
+                u_temp[good] += v.U[:,:,other_year][good]
+                v_temp[good] += v.V[:,:,other_year][good]
+                w_temp[good] += 1
+            u_temp[w_temp > 0] /= w_temp[w_temp>0]
+            v_temp[w_temp > 0] /= w_temp[w_temp>0]
+            to_replace = ((~np.isfinite(this_U)) & (w_temp>0)).ravel()
+            if np.any(to_replace):
+                this_U.ravel()[to_replace] = u_temp.ravel()[to_replace]
+                this_V.ravel()[to_replace] = v_temp.ravel()[to_replace]
+            v_filled.U[:,:,ii]=this_U
+            v_filled.V[:,:,ii]=this_V
+
+        # fill in the remaining gaps using the mean velocity field
+        for ii in range(v.U.shape[2]):
+            this_U=v.U[:,:,ii].copy()
+            this_V=v.V[:,:,ii].copy()
+            to_replace = (~np.isfinite(this_U)).ravel()
+            if np.any(to_replace):
+                this_U.ravel()[to_replace] = vbar.U.ravel()[to_replace]
+                this_V.ravel()[to_replace] = vbar.V.ravel()[to_replace]
+            v_filled.U[:,:,ii]=this_U
+            v_filled.V[:,:,ii]=this_V
+
+        self.velocity.V = v_filled.V
+        self.velocity.U = v_filled.U
+
+    #PURPOSE: make an interpolation object to allow fast interpolation of the velocity field
+    def xy0_interpolator(self, bounds=None, t_range=None, t_step=None):
+        """
+        Build interpolation objects from initial to final positions
+
+        Parameters
+        ----------
+        bounds : iterable, optional
+            bounds of the interpolation domain.  Can be specified as two iterables
+            (x, y) or three (x, y, t). The default is None.
+        t_range : iterable, optional
+            time range for the interpolation, in velocity time units (seconds relative
+                to J2000).  If not specified, the time range of self.velocity
+                will be used.  The default is None.
+        t_step : float, optional
+            The time step for the interpolation, in seconds.  If not specified,
+            the time values in the velocity object will be used. The default is None.
+
+        Returns
+        -------
+        interp_dict : dict
+            dictionary containing x and y interpolator objects giving the final
+            location of a parcel as a function of time.  Each should be called
+            with coordinates (y, x, time).
+        """
+        if t_range is None:
+            t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
+        if bounds is None:
+            bounds=self.velocity.bounds() + [t_range]
+        else:
+            if len(bounds)==2:
+                bounds += [t_range]
+        if t_step is None:
+            # use the times on the velocity object
+            ti = self.velocity.t
+        else:
+            ti = np.arange(bounds[2][0], bounds[2][1]+t_step, t_step)
+        dx=self.velocity.x[1]-self.velocity.x[0]
+
+        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds]
+        yg, xg, tg = np.meshgrid(x0, y0, ti, indexing='ij')
+        shp=xg.shape
+        self.x, self.y, self.t = [item.ravel() for item in (xg, yg, tg)]
+        self.translate_parcel()
+
+        interp_dict = {'x':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), self.x0.reshape(shp), bounds_error=False),
+              'y':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), self.y0.reshape(shp), bounds_error=False)}
+
+        return interp_dict
+
     # PURPOSE: translate a parcel between two times using an advection function
     def translate_parcel(self, **kwargs):
         """
@@ -478,6 +601,10 @@ class advection():
                 - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
         step: int or float, default 1
             Temporal step size in days
+        N: int or NoneType, default None
+            Number of integration steps
+
+            Default is determined based on the temporal step size
         t0: float, default 0.0
             Ending time for advection
         """
@@ -485,6 +612,7 @@ class advection():
         kwargs.setdefault('integrator', self.integrator)
         kwargs.setdefault('method', self.method)
         kwargs.setdefault('step', 1)
+        kwargs.setdefault('N', None)
         kwargs.setdefault('t0', self.t0)
         kwargs.setdefault('streak', False)
         # check that there are points within the velocity file
@@ -500,8 +628,10 @@ class advection():
         # advect the parcel every step days
         # (using closest number of iterations)
         seconds = (kwargs['step']*86400.0)
-        # calculate the number of steps to advect the dataset
-        if (np.min(self.t0) < np.min(self.t)):
+        # set or calculate the number of steps to advect the dataset
+        if kwargs['N'] is not None:
+            n_steps = np.copy(kwargs['N'])
+        elif (np.min(self.t0) < np.min(self.t)):
             # maximum number of steps to advect backwards in time
             n_steps = np.abs(np.max(self.t) - np.min(self.t0))/seconds
         elif (np.max(self.t0) > np.max(self.t)):
