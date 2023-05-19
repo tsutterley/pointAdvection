@@ -637,6 +637,9 @@ class advection():
         elif (np.max(self.t0) > np.max(self.t)):
             # maximum number of steps to advect forward in time
             n_steps = np.abs(np.max(self.t0) - np.min(self.t))/seconds
+        elif (np.ndim(self.t0) == 0) or (np.ndim(self.t) == 0):
+            # maximum number of steps between the two datasets
+            n_steps = np.max(np.abs(self.t0 - self.t))/seconds
         else:
             # average number of steps between the two datasets
             n_steps = np.abs(np.mean(self.t0) - np.mean(self.t))/seconds
