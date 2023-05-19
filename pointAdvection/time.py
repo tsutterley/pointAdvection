@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 u"""
 time.py
-Written by Tyler Sutterley (12/2022)
+Written by Tyler Sutterley (05/2023)
 Utilities for calculating time operations
 
 PYTHON DEPENDENCIES:
@@ -12,6 +12,7 @@ PYTHON DEPENDENCIES:
         https://dateutil.readthedocs.io/en/stable/
 
 UPDATE HISTORY:
+    Updated 05/2023: convert a string with time zone information to datetime
     Updated 12/2022: output variables for some standard epochs
     Updated 08/2022: output variables to unit conversion to seconds
         and the number of days per month for both leap and standard years
@@ -49,6 +50,30 @@ _gps_epoch = (1980, 1, 6, 0, 0, 0)
 _j2000_epoch = (2000, 1, 1, 12, 0, 0)
 _atlas_sdp_epoch = (2018, 1, 1, 0, 0, 0)
 
+# PURPOSE: parse a date string and convert to a datetime object in UTC
+def parse(date_string):
+    """
+    Parse a date string and convert to a naive ``datetime`` object in UTC
+
+    Parameters
+    ----------
+    date_string: str
+        formatted time string
+
+    Returns
+    -------
+    date: obj
+        output ``datetime`` object
+    """
+    # parse the date string
+    date = dateutil.parser.parse(date_string)
+    # convert to UTC if containing time-zone information
+    # then drop the timezone information to prevent unsupported errors
+    if date.tzinfo:
+        date = date.astimezone(dateutil.tz.UTC).replace(tzinfo=None)
+    # return the datetime object
+    return date
+
 # PURPOSE: parse a date string into epoch and units scale
 def parse_date_string(date_string):
     """
@@ -71,7 +96,7 @@ def parse_date_string(date_string):
     """
     # try parsing the original date string as a date
     try:
-        epoch = dateutil.parser.parse(date_string)
+        epoch = parse(date_string)
     except ValueError:
         pass
     else:
@@ -80,7 +105,7 @@ def parse_date_string(date_string):
     # split the date string into units and epoch
     units,epoch = split_date_string(date_string)
     if units not in _to_sec.keys():
-        raise ValueError('Invalid units: {0}'.format(units))
+        raise ValueError(f'Invalid units: {units}')
     # return the epoch (as list) and the time unit conversion factors
     return (datetime_to_list(epoch), _to_sec[units])
 
@@ -97,9 +122,9 @@ def split_date_string(date_string):
     try:
         units,_,epoch = date_string.split(None, 2)
     except ValueError:
-        raise ValueError('Invalid format: {0}'.format(date_string))
+        raise ValueError(f'Invalid format: {date_string}')
     else:
-        return (units.lower(), dateutil.parser.parse(epoch))
+        return (units.lower(), parse(epoch))
 
 # PURPOSE: convert a datetime object into a list
 def datetime_to_list(date):
