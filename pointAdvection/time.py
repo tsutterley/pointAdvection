@@ -122,7 +122,7 @@ def split_date_string(date_string):
     try:
         units,_,epoch = date_string.split(None, 2)
     except ValueError:
-        raise ValueError(f'Invalid format: {date_string}'))
+        raise ValueError(f'Invalid format: {date_string}')
     else:
         return (units.lower(), parse(epoch))
 
