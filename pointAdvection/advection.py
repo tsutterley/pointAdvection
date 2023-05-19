@@ -639,7 +639,7 @@ class advection():
             n_steps = np.abs(np.max(self.t0) - np.min(self.t))/seconds
         else:
             # average number of steps between the two datasets
-            n_steps = np.abs(np.mean(self.t0) - np.mean(self.t))/seconds
+            n_steps = np.max(np.abs(self.t0 - self.t))/seconds
         # check input advection functions
         kwargs.update({'N':np.int64(n_steps)})
         if (self.integrator == 'euler'):
