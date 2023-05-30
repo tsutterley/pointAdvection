@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 combine_icelines_fronts.py
-Written by Tyler Sutterley (02/2023)
+Written by Tyler Sutterley (05/2023)
 Combines ice front masks into mosaics
 
 COMMAND LINE OPTIONS:
@@ -16,6 +16,8 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 05/2023: using pathlib to define and expand paths
+        allow reading of different mask file types
     Written 02/2023
 """
 import sys
@@ -23,6 +25,7 @@ import os
 import re
 import time
 import logging
+import pathlib
 import argparse
 import warnings
 import traceback
@@ -40,12 +43,17 @@ try:
 except (ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pyproj not available", ImportWarning)
+try:
+    import xarray as xr
+except (ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("xarray not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
 # PURPOSE: keep track of threads
 def info(args):
-    logging.info(os.path.basename(sys.argv[0]))
+    logging.info(pathlib.Path(sys.argv[0]).name)
     logging.info(args)
     logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
@@ -57,10 +65,21 @@ def combine_icelines_fronts(base_dir, regions,
     mask_file=None,
     years=None,
     interval=None,
+    band=0,
     mode=None):
 
+    # directory setup
+    base_dir = pathlib.Path(base_dir).expanduser().absolute()
+
     # read initial mask
-    mask = pc.grid.data().from_geotif(mask_file)
+    mask_file = pathlib.path(mask_file).expanduser().absolute()
+    if mask_file.suffix[1:] in ('tif','geotiff','tiff'):
+        mask = pc.grid.data().from_geotif(str(mask_file))
+    else:
+        dinput = xr.open_dataset(mask_file).isel(phony_dim_0 = band)
+        thedict = dict(x=dinput.x.values, y=dinput.y.values, z=dinput.z.values)
+        mask = pc.grid.data().from_dict(thedict)
+    # convert nan values to 0
     mask.z = np.nan_to_num(mask.z, nan=0).astype(np.uint8)
     temp = np.copy(mask.z)
     # size, extent and spacing of mask dataset
@@ -114,15 +133,14 @@ def combine_icelines_fronts(base_dir, regions,
             regex_pattern = rf'({region})_({y:4d})\-(\d{{2}})\-(\d{{2}}).tif$'
             rx = re.compile(regex_pattern, re.VERBOSE | re.IGNORECASE)
             # directory for region masks
-            directory = os.path.join(base_dir, region)
+            directory = base_dir.joinpath(region)
             # find mask files for region
-            mask_files = [f for f in os.listdir(directory) if rx.match(f)]
+            mask_files = [f for f in directory.iterdir() if rx.match(f.name)]
             # for each mask file
-            for m in sorted(mask_files):
+            for region_file in sorted(mask_files):
                 # read regional mask
-                reg, YY, MM, DD = rx.findall(m).pop()
-                region_file = os.path.join(directory, m)
-                region = pc.grid.data().from_geotif(region_file)
+                reg, YY, MM, DD = rx.findall(region_file.name).pop()
+                region = pc.grid.data().from_geotif(str(region_file))
                 region.z = np.nan_to_num(region.z, nan=0).astype(np.uint8)
                 # get image coordinate of regional mask
                 indy, indx = output.image_coordinates(region)
@@ -136,12 +154,12 @@ def combine_icelines_fronts(base_dir, regions,
                     output.mask[indy, indx, t] = region.z[:,:]
 
         # output to netCDF4
-        output_file = f'antarctic_icelines_mask_{y:4d}.nc'
-        output.to_nc(os.path.join(base_dir, output_file),
+        output_file = base_dir.joinpath(f'antarctic_icelines_mask_{y:4d}.nc')
+        output.to_nc(str(output_file),
             replace=True, attributes=attributes,
             srs_wkt=crs.to_wkt())
         # change the permissions mode
-        os.chmod(os.path.join(base_dir, output_file), mode)
+        output_file.chmod(mode=mode)
         # save final mask for initializing the next iteration
         temp = np.copy(output.mask[:,:,-1])
 
@@ -157,15 +175,18 @@ def arguments():
     # command line parameters
     # working data directory for location of ice fronts
     parser.add_argument('--directory','-D',
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
-        default=os.getcwd(),
+        type=pathlib.Path, default=pathlib.Path.cwd(),
         help='Working data directory')
     parser.add_argument('--region','-R',
         required=True, type=str, nargs='+',
         help='Ice front regions')
     parser.add_argument('--mask-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Initial ice mask file')
+    parser.add_argument('--band','-b',
+        metavar='BAND', type=int,
+        default=0,
+        help='Time slice of mask file to use')
     # years of ice front data to run
     parser.add_argument('--year','-Y',
         type=int, nargs='+', default=[2021, 2022],

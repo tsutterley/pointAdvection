@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_icelines_fronts.py
-Written by Tyler Sutterley (01/2023)
+Written by Tyler Sutterley (05/2023)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -26,6 +26,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 05/2023: using pathlib to define and expand paths
     Updated 01/2023: add option for setting connection timeout
         added option for running monthly ice front data
     Updated 12/2022: using virtual file systems to access files
@@ -35,6 +36,7 @@ import sys
 import os
 import re
 import logging
+import pathlib
 import argparse
 import datetime
 import warnings
@@ -69,7 +71,7 @@ warnings.filterwarnings("ignore")
 
 # PURPOSE: keep track of threads
 def info(args):
-    logging.info(os.path.basename(sys.argv[0]))
+    logging.info(pathlib.Path(sys.argv[0]).name)
     logging.info(args)
     logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
@@ -103,9 +105,10 @@ def mask_icelines_fronts(base_dir, regions,
     timeout=None,
     mode=None):
 
+    # directory setup
+    base_dir = pathlib.Path(base_dir).expanduser().absolute()
     # recursively create output directories
-    if not os.access(base_dir, os.F_OK):
-        os.makedirs(base_dir, mode=mode)
+    base_dir.mkdir(mode=mode, parents=True, exist_ok=True)
 
     # dictionary of files for dates
     ice_front_files = {}
@@ -220,7 +223,7 @@ def mask_icelines_fronts(base_dir, regions,
         x = []
         y = []
         for f in sorted(ice_front_files[date]):
-            logging.info(os.path.basename(f))
+            logging.info(str(f))
             # read geopackage url and extract coordinates
             ds = fiona.open(f)
             # iterate over features
@@ -292,11 +295,11 @@ def mask_icelines_fronts(base_dir, regions,
 
         # write mask to file
         # use GDT_Byte as output data type
-        output_file = os.path.join(base_dir, f'icefront_{date}.tif')
-        mask.to_geotif(output_file, dtype=1, srs_wkt=crs.to_wkt())
-        logging.info(output_file)
+        output_file = base_dir.joinpath(f'icefront_{date}.tif')
+        mask.to_geotif(str(output_file), dtype=1, srs_wkt=crs.to_wkt())
+        logging.info(str(output_file))
         # change the permissions mode of the output file
-        os.chmod(output_file, mode=mode)
+        output_file.chmod(mode=mode)
         # # update start of advection to improve computational times
         # start_date = np.copy(J2000)
 
@@ -313,17 +316,16 @@ def arguments():
     # command line parameters
     # working data directory for location of ice fronts
     parser.add_argument('--directory','-D',
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
-        default=os.getcwd(),
+        type=pathlib.Path, default=pathlib.Path.cwd(),
         help='Working data directory')
     parser.add_argument('--region','-R',
         required=True, type=str, nargs='+',
         help='Ice front regions')
     parser.add_argument('--velocity-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Ice sheet velocity file')
     parser.add_argument('--mask-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Initial ice mask file')
     # reference time epoch for input mask file
     parser.add_argument('--epoch','-e',

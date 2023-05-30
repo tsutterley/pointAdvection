@@ -24,6 +24,7 @@ PYTHON DEPENDENCIES:
 UPDATE HISTORY:
     Updated 05/2023: add fill gaps function and xy0 interpolator
         add option to advect parcels to set the number of steps directly
+        using pathlib to define and expand paths
     Updated 03/2023: added function for extracting from a dictionary
         verify input times are float64 arrays
         set default interpolator to linear regular grid
@@ -50,6 +51,7 @@ import io
 import re
 import copy
 import logging
+import pathlib
 import warnings
 import numpy as np
 import scipy.interpolate
@@ -159,17 +161,16 @@ class advection():
             self.filename = copy.copy(filename)
         else:
             # tilde-expand input filename
-            self.filename = os.path.expanduser(filename)
+            self.filename = pathlib.Path(filename).expanduser().absolute()
             # check if file presently exists with input case
-            if not os.access(self.filename,os.F_OK):
+            if not self.filename.exists():
                 # search for filename without case dependence
-                basename = os.path.basename(filename)
-                directory = os.path.dirname(os.path.expanduser(filename))
-                f = [f for f in os.listdir(directory) if re.match(basename,f,re.I)]
+                f = [f.name for f in self.filename.parent.iterdir() if
+                    re.match(self.filename.name, f.name, re.I)]
                 if not f:
                     errmsg = f'{filename} not found in file system'
                     raise FileNotFoundError(errmsg)
-                self.filename = os.path.join(directory,f.pop())
+                self.filename = self.filename.with_name(f.pop())
         # print filename
         logging.debug(self.filename)
         return self
@@ -205,7 +206,7 @@ class advection():
         if (bounds is None) and (buffer is not None):
             bounds = self.buffered_bounds(buffer)
         # read input velocity file from geotiff
-        UV = pc.grid.data().from_geotif(self.filename,
+        UV = pc.grid.data().from_geotif(str(self.filename),
             bands=[1,2], bounds=bounds)
         # return the input velocity field as new point collection object
         # use scale to convert from m/yr to m/s
