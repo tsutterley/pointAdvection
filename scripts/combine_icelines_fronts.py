@@ -72,7 +72,7 @@ def combine_icelines_fronts(base_dir, regions,
     base_dir = pathlib.Path(base_dir).expanduser().absolute()
 
     # read initial mask
-    mask_file = pathlib.path(mask_file).expanduser().absolute()
+    mask_file = pathlib.Path(mask_file).expanduser().absolute()
     if mask_file.suffix[1:] in ('tif','geotiff','tiff'):
         mask = pc.grid.data().from_geotif(str(mask_file))
     else:
