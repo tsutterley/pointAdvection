@@ -79,6 +79,8 @@ def combine_icelines_fronts(base_dir, regions,
         dinput = xr.open_dataset(mask_file).isel(phony_dim_0 = band)
         thedict = dict(x=dinput.x.values, y=dinput.y.values, z=dinput.z.values)
         mask = pc.grid.data().from_dict(thedict)
+        mask.projection = pyproj.CRS.from_epsg(3031).to_wkt()
+        dinput, thedict = None, None
     # convert nan values to 0
     mask.z = np.nan_to_num(mask.z, nan=0).astype(np.uint8)
     temp = np.copy(mask.z)
