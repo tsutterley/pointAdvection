@@ -27,7 +27,7 @@ Installation
 
 Presently ``pointAdvection`` is only available for use as a
 `GitHub repository <https://github.com/tsutterley/pointAdvection>`_.
-The contents of the repository can be download as a
+The contents of the repository can be downloaded as a
 `zipped file <https://github.com/tsutterley/pointAdvection/archive/main.zip>`_  or cloned.
 To use this repository, please fork into your own account and then clone onto your system.
 

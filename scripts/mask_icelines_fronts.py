@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_icelines_fronts.py
-Written by Tyler Sutterley (05/2023)
+Written by Tyler Sutterley (06/2023)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -26,6 +26,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 06/2023: verify geotiff file input to GDAL is a string
     Updated 05/2023: using pathlib to define and expand paths
     Updated 01/2023: add option for setting connection timeout
         added option for running monthly ice front data
@@ -176,12 +177,14 @@ def mask_icelines_fronts(base_dir, regions,
 
     # create advection object with interpolated velocities
     kwargs = dict(integrator='RK4', method=method)
+    velocity_file = pathlib.Path(velocity_file).expanduser().absolute()
     adv = pointAdvection.advection(**kwargs).from_nc(
         velocity_file, bounds=[xlimits, ylimits],
         field_mapping=dict(U='vx', V='vy'), scale=scale)
 
     # read initial mask
-    mask = pc.grid.data().from_geotif(mask_file,
+    mask_file = pathlib.Path(mask_file).expanduser().absolute()
+    mask = pc.grid.data().from_geotif(str(mask_file),
         bounds=[xlimits, ylimits])
     mask.z = np.nan_to_num(mask.z, nan=0)
     mask.z = mask.z.astype(bool)
