@@ -27,6 +27,7 @@ COMMAND LINE OPTIONS:
 
 UPDATE HISTORY:
     Updated 06/2023: verify geotiff file input to GDAL is a string
+        deprecation fix for end of line segment boundary
     Updated 05/2023: using pathlib to define and expand paths
     Updated 01/2023: add option for setting connection timeout
         added option for running monthly ice front data
@@ -238,7 +239,7 @@ def mask_icelines_fronts(base_dir, regions,
                     distances = np.arange(0, line.length, density)
                     # interpolate along path to densify the geometry
                     points = [line.interpolate(d) for d in distances] + \
-                        [line.boundary[1]]
+                        [line.boundary.geoms[1]]
                     # extract each point in the densified geometry
                     for p in points:
                         # try to extract the point
