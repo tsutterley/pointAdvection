@@ -133,7 +133,6 @@ class advection():
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
-        self.xy0_interpolator=None
         self.fill_value=kwargs['fill_value']
 
     def __update_streak__(self, t, **kwargs):
@@ -529,7 +528,76 @@ class advection():
         self.velocity.V = v_filled.V
         self.velocity.U = v_filled.U
 
-    #PURPOSE: make an interpolation object to allow fast interpolation of the velocity field
+
+    #PURPOSE: make interpolation objects to allow fast interpolation final displacements
+    def xy1_interpolator(self, bounds=None, t_range=None, t_step=None):
+        '''
+        Make interpolation objects for the final position of parcels.
+
+        Parameters
+        ----------
+        bounds : iterable of iterables, optional
+            x and y bounds of the region to be interpolated.  If None,
+            the bounds of the velocity data are used. The default is None.
+        t_range : iterable of floats, optional
+            time bounds of the region to be interpolated, in seconds relative
+            to the epoch.  If None, the time bounds of the velocity
+            data is used. The default is None.
+        t_step : TYPE, optional
+            time step, in seconds.  If None, the time values in the
+            velocity data are used.. The default is None.
+
+        Returns
+        -------
+        interp_dict : dict
+            Dictionary with fields 'x' and 'y' containing interpolation objects
+            that give the final position, x1, y1 as a function of time and initial
+            position, x0, y0.
+        '''
+        if t_range is None:
+            t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
+        if bounds is None:
+            bounds=self.velocity.bounds() + [t_range]
+        else:
+            if len(bounds)==2:
+                bounds += tuple([t_range])
+        if t_step is None:
+            # use the times on the velocity object
+            ti = self.velocity.t
+        else:
+            ti = np.arange(bounds[2][0], bounds[2][1]+t_step, t_step)
+        # define grids of working coordinates
+        dx=self.velocity.x[1]-self.velocity.x[0]
+        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
+        xg, yg=np.meshgrid(x0, y0)
+        shp=xg.shape
+        epoch=self.t0
+        # output grids:
+        xf, yf = [np.zeros((y0.size, x0.size, ti.size)) for jj in ['x','y']]
+
+        # advect points starting at the epoch, towards the beginning and
+        # end of the time series
+        for these in [np.flatnonzero(ti >= epoch), np.flatnonzero(ti < epoch)[::-1]]:
+            self.y, self.x, self.t = [jj.ravel() for jj in [yg, xg, np.zeros_like(xg)+epoch]]
+            for this_ind in these:
+                self.t0=ti[this_ind]
+                self.translate_parcel()
+                xf[:,:,this_ind]=self.x0.reshape(shp)
+                yf[:,:,this_ind]=self.y0.reshape(shp)
+                # update the initial coordinates for the next translation
+                self.x=self.x0.copy()
+                self.y=self.y0.copy()
+                self.t=np.zeros_like(xg).ravel()+ti[this_ind]
+
+        # reset the epoch
+        self.t0 = epoch
+
+        interp_dict = {'x':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), xf, bounds_error=False),
+              'y':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), yf, bounds_error=False)}
+        return interp_dict
+
+
+    #PURPOSE: interpolation objects to allow fast interpolation initial positions
     def xy0_interpolator(self, bounds=None, t_range=None, t_step=None):
         """
         Build interpolation objects from initial to final positions
@@ -541,16 +609,16 @@ class advection():
             (x, y) or three (x, y, t). The default is None.
         t_range : iterable, optional
             time range for the interpolation, in velocity time units (seconds relative
-                to J2000).  If not specified, the time range of self.velocity
+                to epoch).  If not specified, the time range of self.velocity
                 will be used.  The default is None.
         t_step : float, optional
-            The time step for the interpolation, in seconds.  If not specified,
+            The time step for the interpolation, in seconds.  If None,
             the time values in the velocity object will be used. The default is None.
 
         Returns
         -------
         interp_dict : dict
-            dictionary containing x and y interpolator objects giving the final
+            dictionary containing x and y interpolator objects giving the initial
             location of a parcel as a function of time.  Each should be called
             with coordinates (y, x, time).
         """
@@ -568,8 +636,8 @@ class advection():
             ti = np.arange(bounds[2][0], bounds[2][1]+t_step, t_step)
         dx=self.velocity.x[1]-self.velocity.x[0]
 
-        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds]
-        yg, xg, tg = np.meshgrid(x0, y0, ti, indexing='ij')
+        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
+        yg, xg, tg = np.meshgrid(y0, x0, ti, indexing='ij')
         shp=xg.shape
         self.x, self.y, self.t = [item.ravel() for item in (xg, yg, tg)]
         self.translate_parcel()
