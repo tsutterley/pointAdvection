@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 tools.py
-Written by Tyler Sutterley (12/2022)
+Written by Tyler Sutterley (05/2023)
 Plotting tools for visualization
 
 PYTHON DEPENDENCIES:
@@ -13,11 +13,12 @@ PYTHON DEPENDENCIES:
         https://github.com/matplotlib/matplotlib
 
 UPDATE HISTORY:
+    Updated 05/2023: using pathlib to define and expand paths
     Updated 12/2022: use f-strings for ascii and verbose formatting
     Written 06/2022
 """
-import os
 import re
+import pathlib
 import colorsys
 import numpy as np
 import matplotlib.cm as cm
@@ -41,10 +42,11 @@ def from_cpt(filename, use_extremes=True, **kwargs):
     """
 
     # read the cpt file and get contents
-    with open(filename, mode='r', encoding='utf8') as f:
+    filename = pathlib.Path(filename).expanduser().absolute()
+    with filename.open(mode='r', encoding='utf8') as f:
         file_contents = f.read().splitlines()
     # extract basename from cpt filename
-    name = re.sub(r'\.cpt','',os.path.basename(filename),flags=re.I)
+    name = re.sub(r'\.cpt', '', filename.name, flags=re.I)
 
     # compile regular expression operator to find numerical instances
     rx = re.compile(r'[-+]?(?:(?:\d*\.\d+)|(?:\d+\.?))(?:[Ee][+-]?\d+)?')

@@ -3,6 +3,7 @@
 u"""
 time.py
 Written by Tyler Sutterley (05/2023)
+
 Utilities for calculating time operations
 
 PYTHON DEPENDENCIES:
@@ -22,6 +23,8 @@ UPDATE HISTORY:
     Updated 01/2021: date parser for cases when only a calendar date
     Written 07/2020
 """
+from __future__ import annotations
+
 import copy
 import warnings
 import datetime
@@ -41,6 +44,14 @@ _to_sec = {'microseconds': 1e-6, 'microsecond': 1e-6,
            'hours': 3600.0, 'hour': 3600.0,
            'hr': 3600.0, 'hrs': 3600.0, 'h': 3600.0,
            'day': 86400.0, 'days': 86400.0, 'd': 86400.0}
+# approximate conversions for longer periods
+_to_sec['mon'] = 30.0 * 86400.0
+_to_sec['month'] = 30.0 * 86400.0
+_to_sec['months'] = 30.0 * 86400.0
+_to_sec['common_year'] = 365.0 * 86400.0
+_to_sec['common_years'] = 365.0 * 86400.0
+_to_sec['year'] = 365.25 * 86400.0
+_to_sec['years'] = 365.25 * 86400.0
 
 # standard epochs
 _mjd_epoch = (1858, 11, 17, 0, 0, 0)
@@ -77,7 +88,7 @@ def parse(date_string):
 # PURPOSE: parse a date string into epoch and units scale
 def parse_date_string(date_string):
     """
-    parse a date string of the form
+    Parse a date string of the form
 
     - time-units since ``yyyy-mm-dd hh:mm:ss``
     - ``yyyy-mm-dd hh:mm:ss`` for exact calendar dates
@@ -90,7 +101,7 @@ def parse_date_string(date_string):
     Returns
     -------
     epoch: list
-        epoch of delta time
+        epoch of ``delta_time``
     conversion_factor: float
         multiplication factor to convert to seconds
     """
@@ -101,9 +112,9 @@ def parse_date_string(date_string):
         pass
     else:
         # return the epoch (as list)
-        return (datetime_to_list(epoch),0.0)
+        return (datetime_to_list(epoch), 0.0)
     # split the date string into units and epoch
-    units,epoch = split_date_string(date_string)
+    units, epoch = split_date_string(date_string)
     if units not in _to_sec.keys():
         raise ValueError(f'Invalid units: {units}')
     # return the epoch (as list) and the time unit conversion factors
@@ -129,19 +140,19 @@ def split_date_string(date_string):
 # PURPOSE: convert a datetime object into a list
 def datetime_to_list(date):
     """
-    convert a datetime object into a list
+    convert a ``datetime`` object into a list
 
     Parameters
     ----------
-    date: datetime object
+    date: obj
+        Input ``datetime`` object to convert
 
     Returns
     -------
     date: list
         [year,month,day,hour,minute,second]
     """
-    return [date.year, date.month, date.day,
-            date.hour, date.minute, date.second]
+    return [date.year,date.month,date.day,date.hour,date.minute,date.second]
 
 # days per month in a leap and a standard year
 # only difference is February (29 vs. 28)
@@ -155,12 +166,12 @@ def calendar_days(year):
 
     Parameters
     ----------
-    year: int or float
+    year: np.ndarray
         calendar year
 
     Returns
     -------
-    dpm: list
+    dpm: np.ndarray
         number of days for each month
     """
     # Rules in the Gregorian calendar for a year to be a leap year:
@@ -180,25 +191,30 @@ def calendar_days(year):
     elif ((m4 != 0) | (m100 == 0) & (m400 != 0) | (m4000 == 0)):
         return np.array(_dpm_stnd, dtype=np.float64)
 
-# PURPOSE: convert a numpy datetime array to delta times from the UNIX epoch
-def convert_datetime(date, epoch=(1970, 1, 1, 0, 0, 0)):
+# PURPOSE: convert a numpy datetime array to delta times since an epoch
+def convert_datetime(date, epoch=_unix_epoch):
     """
-    Convert a numpy datetime array to seconds since ``epoch``
+    Convert a ``numpy`` ``datetime`` array to seconds since ``epoch``
 
     Parameters
     ----------
-    date: obj
-        numpy datetime array
-    epoch: tuple, default (1970,1,1,0,0,0)
-        epoch for output delta_time
+    date: np.ndarray
+        ``numpy`` ``datetime`` array
+    epoch: str, tuple, list, np.ndarray, default (1970,1,1,0,0,0)
+        epoch for output ``delta_time``
 
     Returns
     -------
     delta_time: float
         seconds since epoch
     """
-    epoch = datetime.datetime(*epoch)
-    return (date - np.datetime64(epoch)) / np.timedelta64(1, 's')
+    # convert epoch to datetime variables
+    if isinstance(epoch, (tuple, list)):
+        epoch = np.datetime64(datetime.datetime(*epoch))
+    elif isinstance(epoch, str):
+        epoch = np.datetime64(parse(epoch))
+    # convert to delta time
+    return (date - epoch) / np.timedelta64(1, 's')
 
 # PURPOSE: convert times from seconds since epoch1 to time since epoch2
 def convert_delta_time(delta_time, epoch1=None, epoch2=None, scale=1.0):
@@ -207,50 +223,58 @@ def convert_delta_time(delta_time, epoch1=None, epoch2=None, scale=1.0):
 
     Parameters
     ----------
-    delta_time: float
+    delta_time: np.ndarray
         seconds since epoch1
-    epoch1: tuple or NoneType, default None
+    epoch1: str, tuple, list or NoneType, default None
         epoch for input delta_time
-    epoch2: tuple or NoneType, default None
+    epoch2: str, tuple, list or NoneType, default None
         epoch for output delta_time
     scale: float, default 1.0
         scaling factor for converting time to output units
     """
-    epoch1 = datetime.datetime(*epoch1)
-    epoch2 = datetime.datetime(*epoch2)
-    delta_time_epochs = (epoch2 - epoch1).total_seconds()
+    # convert epochs to datetime variables
+    if isinstance(epoch1, (tuple, list)):
+        epoch1 = np.datetime64(datetime.datetime(*epoch1))
+    elif isinstance(epoch1, str):
+        epoch1 = np.datetime64(parse(epoch1))
+    if isinstance(epoch2, (tuple, list)):
+        epoch2 = np.datetime64(datetime.datetime(*epoch2))
+    elif isinstance(epoch2, str):
+        epoch2 = np.datetime64(parse(epoch2))
+    # calculate the total difference in time in seconds
+    delta_time_epochs = (epoch2 - epoch1) / np.timedelta64(1, 's')
     # subtract difference in time and rescale to output units
     return scale*(delta_time - delta_time_epochs)
 
 # PURPOSE: calculate the delta time from calendar date
 # http://scienceworld.wolfram.com/astronomy/JulianDate.html
 def convert_calendar_dates(year, month, day, hour=0.0, minute=0.0, second=0.0,
-    epoch=(1992, 1, 1, 0, 0, 0), scale=1.0):
+    epoch=(1992,1,1,0,0,0), scale=1.0):
     """
-    Calculate the time in time units since ``epoch`` from calendar dates
+    Calculate the time in units since ``epoch`` from calendar dates
 
     Parameters
     ----------
-    year: float
+    year: np.ndarray
         calendar year
-    month: float
+    month: np.ndarray
         month of the year
-    day: float
+    day: np.ndarray
         day of the month
-    hour: float, default 0.0
+    hour: np.ndarray or float, default 0.0
         hour of the day
-    minute: float, default 0.0
+    minute: np.ndarray or float, default 0.0
         minute of the hour
-    second: float, default 0.0
+    second: np.ndarray or float, default 0.0
         second of the minute
-    epoch: tuple, default (1992,1,1,0,0,0)
+    epoch: str, tuple, list or NoneType, default (1992,1,1,0,0,0)
         epoch for output delta_time
     scale: float, default 1.0
         scaling factor for converting time to output units
 
     Returns
     -------
-    delta_time: float
+    delta_time: np.ndarray
         days since epoch
     """
     # calculate date in Modified Julian Days (MJD) from calendar date
@@ -259,11 +283,16 @@ def convert_calendar_dates(year, month, day, hour=0.0, minute=0.0, second=0.0,
         np.floor(3.0*(np.floor((year + (month - 9.0)/7.0)/100.0) + 1.0)/4.0) + \
         np.floor(275.0*month/9.0) + day + hour/24.0 + minute/1440.0 + \
         second/86400.0 + 1721028.5 - 2400000.5
-    epoch1 = datetime.datetime(*_mjd_epoch)
-    epoch2 = datetime.datetime(*epoch)
-    delta_time_epochs = (epoch2 - epoch1).total_seconds()
-    # return the date in units since epoch
-    return scale*np.array(MJD - delta_time_epochs/86400.0, dtype=np.float64)
+    # convert epochs to datetime variables
+    epoch1 = np.datetime64(datetime.datetime(*_mjd_epoch))
+    if isinstance(epoch, (tuple, list)):
+        epoch = np.datetime64(datetime.datetime(*epoch))
+    elif isinstance(epoch, str):
+        epoch = np.datetime64(parse(epoch))
+    # calculate the total difference in time in days
+    delta_time_epochs = (epoch - epoch1) / np.timedelta64(1, 'D')
+    # return the date in units (default days) since epoch
+    return scale*np.array(MJD - delta_time_epochs, dtype=np.float64)
 
 # PURPOSE: Converts from calendar dates into decimal years
 def convert_calendar_decimal(year, month, day=None, hour=None, minute=None,
@@ -274,30 +303,30 @@ def convert_calendar_decimal(year, month, day=None, hour=None, minute=None,
 
     Parameters
     ----------
-    year: float
+    year: np.ndarray
         calendar year
-    month: float
+    month: np.ndarray
         calendar month
-    day: float or NoneType, default None
+    day: np.ndarray or NoneType, default None
         day of the month
-    hour: float or NoneType, default None
+    hour: np.ndarray or NoneType, default None
         hour of the day
-    minute: float or NoneType, default None
+    minute: np.ndarray or NoneType, default None
         minute of the hour
-    second: float or NoneType, default None
+    second: np.ndarray or NoneType, default None
         second of the minute
-    DofY: float or NoneType, default None
+    DofY: np.ndarray or NoneType, default None
         day of the year (January 1 = 1)
 
     Returns
     -------
-    t_date: float
+    t_date: np.ndarray
         date in decimal-year format
 
     References
     ----------
-    .. [1] Dershowitz, N. and E.M. Reingold. 2008.
-        Calendrical Calculations.
+    .. [Dershowitz2008] Dershowitz, N. and E.M. Reingold.
+        *Calendrical Calculations*, (2008).
         Cambridge: Cambridge University Press.
     """
 
@@ -351,7 +380,7 @@ def convert_calendar_decimal(year, month, day=None, hour=None, minute=None,
         # use calendar month and day of the month to calculate day of the year
         # month minus 1: January = 0, February = 1, etc (indice of month)
         # in decimal form: January = 0.0
-        month_m1 = np.array(cal_date['month'],dtype=int) - 1
+        month_m1 = np.array(cal_date['month'],dtype=np.int64) - 1
 
         # day of month
         if day is not None:
@@ -421,9 +450,9 @@ def convert_julian(JD, **kwargs):
 
     Parameters
     ----------
-    JD: float
+    JD: np.ndarray
         Julian Day (days since 01-01-4713 BCE at 12:00:00)
-    astype: str or NoneType, default None
+    astype: str, np.dtype or NoneType, default None
         convert output to variable type
     format: str, default 'dict'
         format of output variables
@@ -434,27 +463,27 @@ def convert_julian(JD, **kwargs):
 
     Returns
     -------
-    year: float
+    year: np.ndarray
         calendar year
-    month: float
+    month: np.ndarray
         calendar month
-    day: float
+    day: np.ndarray
         day of the month
-    hour: float
+    hour: np.ndarray
         hour of the day
-    minute: float
+    minute: np.ndarray
         minute of the hour
-    second: float
+    second: np.ndarray
         second of the minute
 
     References
     ----------
-    .. [1] "Numerical Recipes in C", by William H. Press,
+    .. [Press1988] *Numerical Recipes in C*, William H. Press,
         Brian P. Flannery, Saul A. Teukolsky, and William T. Vetterling.
-        Cambridge University Press, 1988 (second printing).
-    .. [2] Hatcher, D. A., "Simple Formulae for Julian Day Numbers and
-        Calendar Dates", Quarterly Journal of the Royal Astronomical
-        Society, 25(1), 1984.
+        Second Edition, Cambridge University Press, (1988).
+    .. [Hatcher1984] Hatcher, D. A., "Simple Formulae for Julian Day Numbers and
+        Calendar Dates", *Quarterly Journal of the Royal Astronomical
+        Society*, 25(1), (1984).
     """
     # set default keyword arguments
     kwargs.setdefault('astype', None)
@@ -463,9 +492,8 @@ def convert_julian(JD, **kwargs):
     deprecated_keywords = dict(ASTYPE='astype', FORMAT='format')
     for old,new in deprecated_keywords.items():
         if old in kwargs.keys():
-            warnings.warn("""Deprecated keyword argument {0}.
-                Changed to '{1}'""".format(old,new),
-                DeprecationWarning)
+            warnings.warn(f"""Deprecated keyword argument {old}.
+                Changed to '{new}'""", DeprecationWarning)
             # set renamed argument to not break workflows
             kwargs[new] = copy.copy(kwargs[old])
 

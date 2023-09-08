@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_icelines_fronts.py
-Written by Tyler Sutterley (01/2023)
+Written by Tyler Sutterley (06/2023)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -26,6 +26,9 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 06/2023: verify geotiff file input to GDAL is a string
+        deprecation fix for end of line segment boundary
+    Updated 05/2023: using pathlib to define and expand paths
     Updated 01/2023: add option for setting connection timeout
         added option for running monthly ice front data
     Updated 12/2022: using virtual file systems to access files
@@ -35,6 +38,7 @@ import sys
 import os
 import re
 import logging
+import pathlib
 import argparse
 import datetime
 import warnings
@@ -46,22 +50,22 @@ import pointAdvection
 # attempt imports
 try:
     import fiona
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("fiona not available", ImportWarning)
 try:
     import pointCollection as pc
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pointCollection not available", ImportWarning)
 try:
     import pyproj
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pyproj not available", ImportWarning)
 try:
     import shapely.geometry
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("shapely not available", ImportWarning)
 # ignore warnings
@@ -69,7 +73,7 @@ warnings.filterwarnings("ignore")
 
 # PURPOSE: keep track of threads
 def info(args):
-    logging.info(os.path.basename(sys.argv[0]))
+    logging.info(pathlib.Path(sys.argv[0]).name)
     logging.info(args)
     logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
@@ -103,9 +107,10 @@ def mask_icelines_fronts(base_dir, regions,
     timeout=None,
     mode=None):
 
+    # directory setup
+    base_dir = pathlib.Path(base_dir).expanduser().absolute()
     # recursively create output directories
-    if not os.access(base_dir, os.F_OK):
-        os.makedirs(base_dir, mode=mode)
+    base_dir.mkdir(mode=mode, parents=True, exist_ok=True)
 
     # dictionary of files for dates
     ice_front_files = {}
@@ -173,12 +178,14 @@ def mask_icelines_fronts(base_dir, regions,
 
     # create advection object with interpolated velocities
     kwargs = dict(integrator='RK4', method=method)
+    velocity_file = pathlib.Path(velocity_file).expanduser().absolute()
     adv = pointAdvection.advection(**kwargs).from_nc(
         velocity_file, bounds=[xlimits, ylimits],
         field_mapping=dict(U='vx', V='vy'), scale=scale)
 
     # read initial mask
-    mask = pc.grid.data().from_geotif(mask_file,
+    mask_file = pathlib.Path(mask_file).expanduser().absolute()
+    mask = pc.grid.data().from_geotif(str(mask_file),
         bounds=[xlimits, ylimits])
     mask.z = np.nan_to_num(mask.z, nan=0)
     mask.z = mask.z.astype(bool)
@@ -220,7 +227,7 @@ def mask_icelines_fronts(base_dir, regions,
         x = []
         y = []
         for f in sorted(ice_front_files[date]):
-            logging.info(os.path.basename(f))
+            logging.info(str(f))
             # read geopackage url and extract coordinates
             ds = fiona.open(f)
             # iterate over features
@@ -232,7 +239,7 @@ def mask_icelines_fronts(base_dir, regions,
                     distances = np.arange(0, line.length, density)
                     # interpolate along path to densify the geometry
                     points = [line.interpolate(d) for d in distances] + \
-                        [line.boundary[1]]
+                        [line.boundary.geoms[1]]
                     # extract each point in the densified geometry
                     for p in points:
                         # try to extract the point
@@ -292,11 +299,11 @@ def mask_icelines_fronts(base_dir, regions,
 
         # write mask to file
         # use GDT_Byte as output data type
-        output_file = os.path.join(base_dir, f'icefront_{date}.tif')
-        mask.to_geotif(output_file, dtype=1, srs_wkt=crs.to_wkt())
-        logging.info(output_file)
+        output_file = base_dir.joinpath(f'icefront_{date}.tif')
+        mask.to_geotif(str(output_file), dtype=1, srs_wkt=crs.to_wkt())
+        logging.info(str(output_file))
         # change the permissions mode of the output file
-        os.chmod(output_file, mode=mode)
+        output_file.chmod(mode=mode)
         # # update start of advection to improve computational times
         # start_date = np.copy(J2000)
 
@@ -313,17 +320,16 @@ def arguments():
     # command line parameters
     # working data directory for location of ice fronts
     parser.add_argument('--directory','-D',
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
-        default=os.getcwd(),
+        type=pathlib.Path, default=pathlib.Path.cwd(),
         help='Working data directory')
     parser.add_argument('--region','-R',
         required=True, type=str, nargs='+',
         help='Ice front regions')
     parser.add_argument('--velocity-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Ice sheet velocity file')
     parser.add_argument('--mask-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Initial ice mask file')
     # reference time epoch for input mask file
     parser.add_argument('--epoch','-e',
