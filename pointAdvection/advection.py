@@ -906,7 +906,7 @@ class advection():
         if (ypts.ndim != 1):
             raise ValueError('Y coordinates of polygon not a vector.')
         if (len(xpts) != len(ypts)):
-            raise ValueError('Incompatable vector dimensions.')
+            raise ValueError('Incompatible vector dimensions.')
         # maximum possible number of vertices in polygon
         N = len(xpts)
         # Close the polygon if not already closed
@@ -1264,13 +1264,13 @@ class advection():
                 self.velocity.time, np.arange(nt), kind='linear')
         # evaluate at points
         if (self.velocity.ndim == 1):
-            # evalulate using invariant velocities
+            # evaluate using invariant velocities
             U[v] = self.interpolant['U'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
             V[v] = self.interpolant['V'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
         else:
-            # evalulate using time-variable velocities
+            # evaluate using time-variable velocities
             UT = self.interpolant['U'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
             VT = self.interpolant['V'].__call__(

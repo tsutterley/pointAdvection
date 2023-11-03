@@ -14,7 +14,7 @@ COMMAND LINE OPTIONS:
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
     -Y X, --year X: Years of ice front data to run
-    -i X, --interval X: Time inverval of ice front data to run
+    -i X, --interval X: Time interval of ice front data to run
     -B X, --buffer X: Distance in kilometers to buffer extents
     -I X, --interpolate X: Interpolation method
         spline
@@ -344,7 +344,7 @@ def arguments():
     parser.add_argument('--interval','-i',
         metavar='INTERVAL', type=str,
         choices=('daily','monthly'), default='daily',
-        help='Time inverval of ice front data to run')
+        help='Time interval of ice front data to run')
     # extent buffer
     parser.add_argument('--buffer','-B',
         type=float, default=5.0,

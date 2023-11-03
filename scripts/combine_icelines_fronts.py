@@ -11,7 +11,7 @@ COMMAND LINE OPTIONS:
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
     -Y X, --year X: Years of ice front data to run
-    -i X, --interval X: Time inverval of ice front data to run
+    -i X, --interval X: Time interval of ice front data to run
     -V, --verbose: Verbose output of processing run
     -M X, --mode X: permissions mode of the output files
 
@@ -197,7 +197,7 @@ def arguments():
     parser.add_argument('--interval','-i',
         metavar='INTERVAL', type=str,
         choices=('daily','monthly'), default='daily',
-        help='Time inverval of ice front data to run')
+        help='Time interval of ice front data to run')
     # print information about processing run
     parser.add_argument('--verbose','-V',
         action='count', default=0,
