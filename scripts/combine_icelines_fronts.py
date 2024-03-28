@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 combine_icelines_fronts.py
-Written by Tyler Sutterley (05/2023)
+Written by Tyler Sutterley (03/2024)
 Combines ice front masks into mosaics
 
 COMMAND LINE OPTIONS:
@@ -12,10 +12,14 @@ COMMAND LINE OPTIONS:
     -e X, --epoch X: Reference epoch of input mask
     -Y X, --year X: Years of ice front data to run
     -i X, --interval X: Time interval of ice front data to run
+        - daily: daily ice front data
+        - monthly: monthly ice front data
+        - quarterly: quarterly ice front data
     -V, --verbose: Verbose output of processing run
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 03/2024: added option to use quarterly masks
     Updated 05/2023: using pathlib to define and expand paths
         allow reading of different mask file types
     Written 02/2023
@@ -62,11 +66,12 @@ def info(args):
 
 # PURPOSE: combines ice front masks into mosaics
 def combine_icelines_fronts(base_dir, regions,
-    mask_file=None,
-    years=None,
-    interval=None,
-    band=0,
-    mode=None):
+        mask_file=None,
+        years=None,
+        interval=None,
+        band=0,
+        mode=None
+    ):
 
     # directory setup
     base_dir = pathlib.Path(base_dir).expanduser().absolute()
@@ -114,6 +119,9 @@ def combine_icelines_fronts(base_dir, regions,
         elif (interval == 'monthly'):
             nt = 12
             time_units = 'months'
+        elif (interval == 'quarterly'):
+            nt = 4
+            time_units = 'quarters'
         # output mask dataset for year
         output = pc.grid.mosaic()
         output.update_spacing(mask)
@@ -132,25 +140,33 @@ def combine_icelines_fronts(base_dir, regions,
         for region in regions:
             # regular expression pattern for finding files and
             # extracting information from file names
-            regex_pattern = rf'({region})_({y:4d})\-(\d{{2}})\-(\d{{2}}).tif$'
-            rx = re.compile(regex_pattern, re.VERBOSE | re.IGNORECASE)
+            if (interval == 'quarterly'):
+                pattern = rf'({region})_({y:4d})Q(\d+).tif$'
+                rx = re.compile(pattern, re.VERBOSE | re.IGNORECASE)
+            else:
+                pattern = rf'({region})_({y:4d})\-(\d{{2}})\-(\d{{2}}).tif$'
+                rx = re.compile(pattern, re.VERBOSE | re.IGNORECASE)
             # directory for region masks
             directory = base_dir.joinpath(region)
             # find mask files for region
             mask_files = [f for f in directory.iterdir() if rx.match(f.name)]
             # for each mask file
             for region_file in sorted(mask_files):
+                # get temporal coordinate of regional mask
+                if (interval == 'daily'):
+                    reg, YY, MM, DD = rx.findall(region_file.name).pop()
+                    indt = np.sum(dpm[:int(MM) - 1]) + int(DD) - 1
+                elif (interval == 'monthly'):
+                    reg, YY, MM, DD = rx.findall(region_file.name).pop()
+                    indt = int(MM) - 1
+                elif (interval == 'quarterly'):
+                    reg, YY, Q = rx.findall(region_file.name).pop()
+                    indt = int(Q) - 1
                 # read regional mask
-                reg, YY, MM, DD = rx.findall(region_file.name).pop()
                 region = pc.grid.data().from_geotif(str(region_file))
                 region.z = np.nan_to_num(region.z, nan=0).astype(np.uint8)
                 # get image coordinate of regional mask
-                indy, indx = output.image_coordinates(region)
-                # get temporal coordinate of regional mask
-                if (interval == 'daily'):
-                    indt = np.sum(dpm[:int(MM) - 1]) + int(DD) - 1
-                elif (interval == 'monthly'):
-                    indt = int(MM) - 1
+                indy, indx = output.image_coordinates(region)                
                 # update mask
                 for t in range(indt, nt):
                     output.mask[indy, indx, t] = region.z[:,:]
@@ -196,7 +212,7 @@ def arguments():
     # Time interval of ice front data to run
     parser.add_argument('--interval','-i',
         metavar='INTERVAL', type=str,
-        choices=('daily','monthly'), default='daily',
+        choices=('daily','monthly','quarterly'), default='daily',
         help='Time interval of ice front data to run')
     # print information about processing run
     parser.add_argument('--verbose','-V',
