@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_icelines_fronts.py
-Written by Tyler Sutterley (06/2023)
+Written by Tyler Sutterley (04/2024)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -26,6 +26,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 04/2024: use timescale for temporal operations
     Updated 06/2023: verify geotiff file input to GDAL is a string
         deprecation fix for end of line segment boundary
     Updated 05/2023: using pathlib to define and expand paths
@@ -68,6 +69,11 @@ try:
 except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("shapely not available", ImportWarning)
+try:
+    import timescale
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("timescale not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
@@ -177,7 +183,7 @@ def mask_icelines_fronts(base_dir, regions,
     step = 86400.0
 
     # create advection object with interpolated velocities
-    kwargs = dict(integrator='RK4', method=method)
+    kwargs = dict(time_units='seconds', integrator='RK4', method=method)
     velocity_file = pathlib.Path(velocity_file).expanduser().absolute()
     adv = pointAdvection.advection(**kwargs).from_nc(
         velocity_file, bounds=[xlimits, ylimits],
@@ -211,15 +217,15 @@ def mask_icelines_fronts(base_dir, regions,
         # extract information
         YY1, MM1, DD1 = np.array(date.split('-'), dtype='f')
         # get dates in J2000 seconds
-        J2000 = pointAdvection.time.convert_calendar_dates(
+        J2000 = timescale.time.convert_calendar_dates(
             YY1, MM1, DD1, epoch=(2000,1,1,0,0,0), scale=86400.0)
         # initial start and end date to run to create mask
         if start_date is None:
-            start_date = pointAdvection.time.convert_calendar_dates(
+            start_date = timescale.time.convert_calendar_dates(
                 *epoch, epoch=(2000,1,1,0,0,0), scale=86400.0)
         if end_date is None:
             now = datetime.datetime.now()
-            end_date = pointAdvection.time.convert_calendar_dates(
+            end_date = timescale.time.convert_calendar_dates(
                 now.year, now.month, now.day,
                 epoch=(2000,1,1,0,0,0), scale=86400.0)
 

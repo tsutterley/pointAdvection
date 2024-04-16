@@ -25,7 +25,6 @@ Utilities for advecting point data for use in a Lagrangian reference frame
     :caption: API Reference
 
     api_reference/advection.rst
-    api_reference/time.rst
     api_reference/tools.rst
     api_reference/utilities.rst
 
