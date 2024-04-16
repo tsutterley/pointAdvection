@@ -28,6 +28,12 @@ General Methods
 
 .. autofunction:: pointAdvection.utilities.isoformat
 
+.. autofunction:: pointAdvection.utilities._create_default_ssl_context
+
+.. autofunction:: pointAdvection.utilities._create_ssl_context_no_verify
+
+.. autofunction:: pointAdvection.utilities._set_ssl_context_options
+
 .. autofunction:: pointAdvection.utilities.check_connection
 
 .. autofunction:: pointAdvection.utilities.geoservice_list
