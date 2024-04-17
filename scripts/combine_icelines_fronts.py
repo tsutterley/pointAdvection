@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 combine_icelines_fronts.py
-Written by Tyler Sutterley (03/2024)
+Written by Tyler Sutterley (04/2024)
 Combines ice front masks into mosaics
 
 COMMAND LINE OPTIONS:
@@ -19,6 +19,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 04/2024: use timescale for temporal operations
     Updated 03/2024: added option to use quarterly masks
     Updated 05/2023: using pathlib to define and expand paths
         allow reading of different mask file types
@@ -47,6 +48,11 @@ try:
 except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pyproj not available", ImportWarning)
+try:
+    import timescale
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("timescale not available", ImportWarning)
 try:
     import xarray as xr
 except (AttributeError, ImportError, ModuleNotFoundError) as exc:
@@ -115,7 +121,7 @@ def combine_icelines_fronts(base_dir, regions,
     for y in years:
         # number of time points for a given interval
         if (interval == 'daily'):
-            dpm = pointAdvection.time.calendar_days(y)
+            dpm = timescale.time.calendar_days(y)
             nt = np.sum(dpm)
             time_units = 'days'
         elif (interval == 'monthly'):

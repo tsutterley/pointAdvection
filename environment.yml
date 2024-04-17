@@ -15,6 +15,7 @@ dependencies:
   - python-dateutil
   - scipy>=1.10.1
   - shapely
+  - timescale
   - pip
   - pip:
      - git+https://github.com/smithb/pointCollection.git

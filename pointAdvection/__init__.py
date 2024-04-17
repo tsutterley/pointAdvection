@@ -10,7 +10,6 @@ for use in a Lagrangian reference frame
 Documentation is available at https://pointAdvection.readthedocs.io
 """
 # base modules
-import pointAdvection.time
 import pointAdvection.tools
 import pointAdvection.utilities
 from pointAdvection.advection import advection
