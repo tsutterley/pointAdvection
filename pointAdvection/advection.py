@@ -56,6 +56,7 @@ import scipy.interpolate
 import scipy.spatial
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
+import time
 # attempt imports
 try:
     import pointCollection as pc
@@ -231,7 +232,7 @@ class advection():
             group: str or None = None,
             bounds: list | np.ndarray | None = None,
             buffer: float | None = 5e4,
-            scale: float = 1.0/31557600.0
+            scale: float = 1.0/31557600.0, **kwargs
         ):
         """
         Read netCDF4 velocity file and extract x and y velocities
@@ -255,19 +256,30 @@ class advection():
 
             defaults to converting from m/yr
         """
+        if self.x is None or not np.any(np.isfinite(self.x)):
+            raise(ValueError('need to assign x and y before reading velocities'))
         # find input netCDF4 velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
         if (bounds is None) and (buffer is not None):
             bounds = self.buffered_bounds(buffer)
         # read input velocity file from netCDF4
+
         self.velocity = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
-            bounds=bounds)
+            bounds=bounds, **kwargs)
+        # attempt to read the error terms
+        try:
+            temp = pc.grid.data().from_nc(self.filename,
+                fields=['ERRX','ERRY'], group=group,
+                bounds=bounds)
+            self.velocity.assign(eU=temp.ERRX, eV=temp.ERRY)
+        except Exception:
+            pass
         # attempt to set dimensions if not current attribute
         try:
             setattr(self.velocity, 'ndim', self.velocity.U.ndim)
-        except AttributeError as exc:
+        except AttributeError:
             pass
         # swap orientation of axes
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
@@ -416,7 +428,15 @@ class advection():
             # x and y limits (buffered maximum and minimum)
             bounds = self.buffered_bounds(buffer)
         # read input velocity data from grid objects
-        self.velocity = pc.grid.data().from_list(D_list, sort=sort)
+        v_list=[]
+        for Di in D_list:
+            if isinstance(Di, self.__class__):
+                v_list += [Di.velocity]
+                # if we are assembling from a set of advection objects, assume that scaling is already done
+                scale=1.
+            else:
+                v_list += [Di]
+        self.velocity = pc.grid.data().from_list(v_list, sort=sort)
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
@@ -530,7 +550,8 @@ class advection():
 
 
     #PURPOSE: make interpolation objects to allow fast interpolation final displacements
-    def xy1_interpolator(self, bounds=None, t_range=None, t_step=None):
+    def xy1_interpolator(self, bounds=None, t_range=None, t_step=None, blocksize=100,
+                         advection_time_step=5, report_progress=False):
         '''
         Make interpolation objects for the final position of parcels.
 
@@ -543,16 +564,18 @@ class advection():
             time bounds of the region to be interpolated, in seconds relative
             to the epoch.  If None, the time bounds of the velocity
             data is used. The default is None.
-        t_step : TYPE, optional
+        t_step : float, optional
             time step, in seconds.  If None, the time values in the
             velocity data are used.. The default is None.
+        advection_time_step : float, optional
+            reference time step for the advection object to use.  The default is 5 (days)
+        blocksize: int, optional
+            grid will be divided into blocks of this size, or run all at once if None
 
         Returns
         -------
-        interp_dict : dict
-            Dictionary with fields 'x' and 'y' containing interpolation objects
-            that give the final position, x1, y1 as a function of time and initial
-            position, x0, y0.
+        grid_obj : pc.grid.data
+             grid object with fields x1 and y1 containing positions at time t for objects starting at (x, y) at the epoch.
         '''
         if t_range is None:
             t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
@@ -569,36 +592,58 @@ class advection():
         # define grids of working coordinates
         dx=self.velocity.x[1]-self.velocity.x[0]
         x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
+        print([x0.shape, y0.shape])
         xg, yg=np.meshgrid(x0, y0)
-        shp=xg.shape
         epoch=self.t0
         # output grids:
         xf, yf = [np.zeros((y0.size, x0.size, ti.size)) for jj in ['x','y']]
 
-        # advect points starting at the epoch, towards the beginning and
-        # end of the time series
-        for these in [np.flatnonzero(ti >= epoch), np.flatnonzero(ti < epoch)[::-1]]:
-            self.y, self.x, self.t = [jj.ravel() for jj in [yg, xg, np.zeros_like(xg)+epoch]]
-            for this_ind in these:
-                self.t0=ti[this_ind]
-                self.translate_parcel()
-                xf[:,:,this_ind]=self.x0.reshape(shp)
-                yf[:,:,this_ind]=self.y0.reshape(shp)
-                # update the initial coordinates for the next translation
-                self.x=self.x0.copy()
-                self.y=self.y0.copy()
-                self.t=np.zeros_like(xg).ravel()+ti[this_ind]
-
+        if blocksize is not None:
+            x_blocksize=blocksize
+            y_blocksize=blocksize
+        else:
+            x_blocksize=x0.size
+            y_blocksize=y0.size
+        last_t=time.time()
+        for row0 in np.arange(0, y0.size, y_blocksize):
+            rows=slice(row0, np.minimum(row0+y_blocksize, y0.size))
+            for col0 in np.arange(0, x0.size, x_blocksize):
+                cols=slice(col0, np.minimum(col0+x_blocksize, x0.size))
+                xg_sub=xg[rows, cols]
+                yg_sub=yg[rows, cols]
+                # advect points starting at the epoch, towards the beginning and
+                # end of the time series
+                for these in [np.flatnonzero(ti >= epoch), np.flatnonzero(ti < epoch)[::-1]]:
+                    # initialize at the epoch
+                    self.y, self.x, self.t = [jj.ravel() for jj in [yg_sub, xg_sub, np.zeros_like(xg_sub)+epoch]]
+                    for this_ind in these:
+                        self.t0=ti[this_ind]
+                        try:
+                            self.translate_parcel(step=5 )
+                        except ValueError:
+                            # ValueError is thrown when all points are outside the velocity map
+                            self.x0 *= np.NaN
+                            self.y0 *= np.NaN
+                        xf[rows, cols, this_ind]=self.x0.reshape(xg_sub.shape)
+                        yf[rows, cols, this_ind]=self.y0.reshape(xg_sub.shape)
+                        # update the initial coordinates for the next translation
+                        self.x=self.x0.copy()
+                        self.y=self.y0.copy()
+                        self.t=np.zeros_like(xg[rows, cols]).ravel()+ti[this_ind]
+                if report_progress:
+                    t_elapsed=time.time()-last_t
+                    last_t=time.time()
+                    print(f'row0={row0} out of {y0.size}, col0={col0} out of {x0.size}, dt={t_elapsed}')
         # reset the epoch
         self.t0 = epoch
 
-        interp_dict = {'x':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), xf, bounds_error=False),
-              'y':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), yf, bounds_error=False)}
-        return interp_dict
+        grid_obj=pc.grid.data().from_dict({'x':x0,'y':y0, 't':ti, 'x1':xf,'y1':yf})
+
+        return grid_obj
 
 
     #PURPOSE: interpolation objects to allow fast interpolation initial positions
-    def xy0_interpolator(self, bounds=None, t_range=None, t_step=None):
+    def xy0_interpolator(self, bounds=None, t_range=None, t_step=None, advection_time_step=10, blocksize=100):
         """
         Build interpolation objects from initial to final positions
 
@@ -614,13 +659,13 @@ class advection():
         t_step : float, optional
             The time step for the interpolation, in seconds.  If None,
             the time values in the velocity object will be used. The default is None.
+        advection_time_step : float, optional
+            The time step to use in parcel tracking, in days.  The default is 5.
 
         Returns
         -------
-        interp_dict : dict
-            dictionary containing x and y interpolator objects giving the initial
-            location of a parcel as a function of time.  Each should be called
-            with coordinates (y, x, time).
+        grid_obj : pc.grid.data
+             grid object with fields x0 and y0 containing positions at the epoch for parcels starting at x, y, t
         """
         if t_range is None:
             t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
@@ -638,14 +683,37 @@ class advection():
 
         x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
         yg, xg, tg = np.meshgrid(y0, x0, ti, indexing='ij')
+        x_init, y_init = [np.zeros_like(ii) for ii in [xg, yg]]
         shp=xg.shape
-        self.x, self.y, self.t = [item.ravel() for item in (xg, yg, tg)]
-        self.translate_parcel()
 
-        interp_dict = {'x':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), self.x0.reshape(shp), bounds_error=False),
-              'y':scipy.interpolate.RegularGridInterpolator((y0, x0, ti), self.y0.reshape(shp), bounds_error=False)}
+        if blocksize is not None:
+            x_blocksize=blocksize
+            y_blocksize=blocksize
+        else:
+            x_blocksize=x0.size
+            y_blocksize=y0.size
+        for t_ind in range(len(ti)):
+            for row0 in np.arange(0, y0.size, y_blocksize):
+                rows=slice(row0, np.minimum(row0+y_blocksize, y0.size))
+                for col0 in np.arange(0, x0.size, x_blocksize):
+                    cols=slice(col0, np.minimum(col0+x_blocksize, x0.size))
+                    xg_sub=xg[rows, cols, t_ind]
+                    yg_sub=yg[rows, cols, t_ind]
+                    tg_sub=tg[rows, cols, t_ind]
+                    self.x, self.y, self.t = [item.ravel() for item in (xg_sub, yg_sub, tg_sub)]
+                    try:
+                        self.translate_parcel(step=advection_time_step)
+                    except ValueError:
+                        # ValueError is thrown when all points are outside the velocity map
+                        self.x0 *= np.NaN
+                        self.y0 *= np.NaN
+                    x_init[rows, cols, t_ind] = self.x0.reshape(xg_sub.shape)
+                    y_init[rows, cols, t_ind] = self.y0.reshape(xg_sub.shape)
+                        
 
-        return interp_dict
+        grid_obj = pc.grid.data().from_dict({'x':x0, 'y':y0,'t':ti,'x0':x_init,'y0':y_init})
+
+        return grid_obj
 
     # PURPOSE: translate a parcel between two times using an advection function
     def translate_parcel(self, **kwargs):
