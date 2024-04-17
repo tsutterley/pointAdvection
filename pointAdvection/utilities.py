@@ -1,25 +1,29 @@
 #!/usr/bin/env python
 u"""
 utilities.py
-Written by Tyler Sutterley (11/2022)
-Download and management utilities for syncing files
+Written by Tyler Sutterley (11/2023)
+Download and management utilities for syncing time and auxiliary files
 
 PYTHON DEPENDENCIES:
     lxml: processing XML and HTML in Python
         https://pypi.python.org/pypi/lxml
 
 UPDATE HISTORY:
+    Updated 11/2023: updated ssl context to fix deprecation error
+    Updated 05/2023: using pathlib to define and expand paths
+        add basic variable typing to function inputs
+        updated SSL context to fix some deprecation warnings
     Written 12/2022
 """
-from __future__ import print_function, division
+from __future__ import print_function, division, annotations
 
 import sys
-import os
 import re
 import io
 import ssl
 import inspect
 import hashlib
+import pathlib
 import warnings
 import posixpath
 import subprocess
@@ -32,32 +36,35 @@ else:
     import urllib.request as urllib2
 
 # PURPOSE: get absolute path within a package from a relative path
-def get_data_path(relpath):
+def get_data_path(relpath: list | str | pathlib.Path):
     """
     Get the absolute path within a package from a relative path
 
     Parameters
     ----------
-    relpath: str,
+    relpath: list, str or pathlib.Path
         relative path
     """
     # current file path
     filename = inspect.getframeinfo(inspect.currentframe()).filename
-    filepath = os.path.dirname(os.path.abspath(filename))
-    if isinstance(relpath,list):
+    filepath = pathlib.Path(filename).absolute().parent
+    if isinstance(relpath, list):
         # use *splat operator to extract from list
-        return os.path.join(filepath,*relpath)
-    elif isinstance(relpath,str):
-        return os.path.join(filepath,relpath)
+        return filepath.joinpath(*relpath)
+    elif isinstance(relpath, (str, pathlib.Path)):
+        return filepath.joinpath(relpath)
 
 # PURPOSE: get the hash value of a file
-def get_hash(local, algorithm='MD5'):
+def get_hash(
+        local: str | io.IOBase | pathlib.Path,
+        algorithm: str = 'MD5'
+    ):
     """
     Get the hash value from a local file or ``BytesIO`` object
 
     Parameters
     ----------
-    local: obj or str
+    local: obj, str or pathlib.Path
         BytesIO object or path to file
     algorithm: str, default 'MD5'
         hashing algorithm for checksum validation
@@ -71,10 +78,14 @@ def get_hash(local, algorithm='MD5'):
             return hashlib.md5(local.getvalue()).hexdigest()
         elif (algorithm == 'sha1'):
             return hashlib.sha1(local.getvalue()).hexdigest()
-    elif os.access(os.path.expanduser(local),os.F_OK):
+    elif isinstance(local, (str, pathlib.Path)):
         # generate checksum hash for local file
+        local = pathlib.Path(local).expanduser()
+        # if file currently doesn't exist, return empty string
+        if not local.exists():
+            return ''
         # open the local_file in binary read mode
-        with open(os.path.expanduser(local), 'rb') as local_buffer:
+        with local.open(mode='rb') as local_buffer:
             # generate checksum hash for a given type
             if (algorithm == 'MD5'):
                 return hashlib.md5(local_buffer.read()).hexdigest()
@@ -84,7 +95,10 @@ def get_hash(local, algorithm='MD5'):
         return ''
 
 # PURPOSE: get the git hash value
-def get_git_revision_hash(refname='HEAD', short=False):
+def get_git_revision_hash(
+        refname: str = 'HEAD',
+        short: bool = False
+    ):
     """
     Get the ``git`` hash value for a particular reference
 
@@ -97,8 +111,8 @@ def get_git_revision_hash(refname='HEAD', short=False):
     """
     # get path to .git directory from current file path
     filename = inspect.getframeinfo(inspect.currentframe()).filename
-    basepath = os.path.dirname(os.path.dirname(os.path.abspath(filename)))
-    gitpath = os.path.join(basepath,'.git')
+    basepath = pathlib.Path(filename).absolute().parent.parent
+    gitpath = basepath.joinpath('.git')
     # build command
     cmd = ['git', f'--git-dir={gitpath}', 'rev-parse']
     cmd.append('--short') if short else None
@@ -113,15 +127,15 @@ def get_git_status():
     """
     # get path to .git directory from current file path
     filename = inspect.getframeinfo(inspect.currentframe()).filename
-    basepath = os.path.dirname(os.path.dirname(os.path.abspath(filename)))
-    gitpath = os.path.join(basepath,'.git')
+    basepath = pathlib.Path(filename).absolute().parent.parent
+    gitpath = basepath.joinpath('.git')
     # build command
     cmd = ['git', f'--git-dir={gitpath}', 'status', '--porcelain']
     with warnings.catch_warnings():
         return bool(subprocess.check_output(cmd))
 
 # PURPOSE: recursively split a url path
-def url_split(s):
+def url_split(s: str):
     """
     Recursively split a url path into a list
 
@@ -154,7 +168,10 @@ def convert_arg_line_to_args(arg_line):
         yield arg
 
 # PURPOSE: returns the Unix timestamp value for a formatted date string
-def get_unix_time(time_string, format='%Y-%m-%d %H:%M:%S'):
+def get_unix_time(
+        time_string: str,
+        format: str = '%Y-%m-%d %H:%M:%S'
+    ):
     """
     Get the Unix timestamp value for a formatted date string
 
@@ -180,7 +197,7 @@ def get_unix_time(time_string, format='%Y-%m-%d %H:%M:%S'):
         return parsed_time.timestamp()
 
 # PURPOSE: output a time string in isoformat
-def isoformat(time_string):
+def isoformat(time_string: str):
     """
     Reformat a date string to ISO formatting
 
@@ -197,11 +214,38 @@ def isoformat(time_string):
     else:
         return parsed_time.isoformat()
 
+def _create_default_ssl_context() -> ssl.SSLContext:
+    """Creates the default SSL context
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    _set_ssl_context_options(context)
+    context.options |= ssl.OP_NO_COMPRESSION
+    return context
+
+def _create_ssl_context_no_verify() -> ssl.SSLContext:
+    """Creates an SSL context for unverified connections
+    """
+    context = _create_default_ssl_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+def _set_ssl_context_options(context: ssl.SSLContext) -> None:
+    """Sets the default options for the SSL context
+    """
+    if sys.version_info >= (3, 10) or ssl.OPENSSL_VERSION_INFO >= (1, 1, 0, 7):
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+    else:
+        context.options |= ssl.OP_NO_SSLv2
+        context.options |= ssl.OP_NO_SSLv3
+        context.options |= ssl.OP_NO_TLSv1
+        context.options |= ssl.OP_NO_TLSv1_1
+
 # default ssl context
-_default_ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+_default_ssl_context = _create_ssl_context_no_verify()
 
 # PURPOSE: check internet connection
-def check_connection(HOST, context=_default_ssl_context):
+def check_connection(HOST: str, context=_default_ssl_context):
     """
     Check internet connection with http host
 
@@ -215,15 +259,21 @@ def check_connection(HOST, context=_default_ssl_context):
     # attempt to connect to http host
     try:
         urllib2.urlopen(HOST, timeout=20, context=context)
-    except urllib2.URLError:
-        raise RuntimeError('Check internet connection')
+    except urllib2.URLError as exc:
+        raise RuntimeError('Check internet connection') from exc
     else:
         return True
 
 # PURPOSE: list a directory on DLR geoservice https Server
-def geoservice_list(HOST, timeout=None, context=_default_ssl_context,
-    parser=lxml.etree.HTMLParser(), format='%Y-%m-%d %H:%M:%S',
-    pattern='', sort=False):
+def geoservice_list(
+        HOST: str | list,
+        timeout: int | None = None,
+        context = _default_ssl_context,
+        parser = lxml.etree.HTMLParser(),
+        format: str = '%Y-%m-%d %H:%M:%S',
+        pattern: str = '',
+        sort: bool = False
+    ):
     """
     List a directory on DLR geoservice https Server
 

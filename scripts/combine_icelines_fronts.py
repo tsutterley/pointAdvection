@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 combine_icelines_fronts.py
-Written by Tyler Sutterley (02/2023)
+Written by Tyler Sutterley (04/2024)
 Combines ice front masks into mosaics
 
 COMMAND LINE OPTIONS:
@@ -11,11 +11,18 @@ COMMAND LINE OPTIONS:
     --mask-file X: initial ice mask file
     -e X, --epoch X: Reference epoch of input mask
     -Y X, --year X: Years of ice front data to run
-    -i X, --interval X: Time inverval of ice front data to run
+    -i X, --interval X: Time interval of ice front data to run
+        - daily: daily ice front data
+        - monthly: monthly ice front data
+        - quarterly: quarterly ice front data
     -V, --verbose: Verbose output of processing run
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 04/2024: use timescale for temporal operations
+    Updated 03/2024: added option to use quarterly masks
+    Updated 05/2023: using pathlib to define and expand paths
+        allow reading of different mask file types
     Written 02/2023
 """
 import sys
@@ -23,6 +30,7 @@ import os
 import re
 import time
 import logging
+import pathlib
 import argparse
 import warnings
 import traceback
@@ -32,20 +40,30 @@ import pointAdvection
 # attempt imports
 try:
     import pointCollection as pc
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pointCollection not available", ImportWarning)
 try:
     import pyproj
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pyproj not available", ImportWarning)
+try:
+    import timescale
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("timescale not available", ImportWarning)
+try:
+    import xarray as xr
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("xarray not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
 # PURPOSE: keep track of threads
 def info(args):
-    logging.info(os.path.basename(sys.argv[0]))
+    logging.info(pathlib.Path(sys.argv[0]).name)
     logging.info(args)
     logging.info(f'module name: {__name__}')
     if hasattr(os, 'getppid'):
@@ -54,13 +72,29 @@ def info(args):
 
 # PURPOSE: combines ice front masks into mosaics
 def combine_icelines_fronts(base_dir, regions,
-    mask_file=None,
-    years=None,
-    interval=None,
-    mode=None):
+        mask_file=None,
+        years=None,
+        interval=None,
+        band=0,
+        mode=None
+    ):
+
+    # directory setup
+    base_dir = pathlib.Path(base_dir).expanduser().absolute()
 
     # read initial mask
-    mask = pc.grid.data().from_geotif(mask_file)
+    mask_file = pathlib.Path(mask_file).expanduser().absolute()
+    if mask_file.suffix[1:] in ('tif','geotiff','tiff'):
+        mask = pc.grid.data().from_geotif(str(mask_file))
+    else:
+        dinput = xr.open_dataset(
+            mask_file, decode_times=False
+        ).isel(t = band)
+        d = dict(x=dinput.x.values, y=dinput.y.values, z=dinput.mask.values)
+        mask = pc.grid.data().from_dict(d)
+        mask.projection = pyproj.CRS.from_epsg(3031).to_wkt()
+        dinput, d = None, None
+    # convert nan values to 0
     mask.z = np.nan_to_num(mask.z, nan=0).astype(np.uint8)
     temp = np.copy(mask.z)
     # size, extent and spacing of mask dataset
@@ -87,12 +121,15 @@ def combine_icelines_fronts(base_dir, regions,
     for y in years:
         # number of time points for a given interval
         if (interval == 'daily'):
-            dpm = pointAdvection.time.calendar_days(y)
+            dpm = timescale.time.calendar_days(y)
             nt = np.sum(dpm)
             time_units = 'days'
         elif (interval == 'monthly'):
             nt = 12
             time_units = 'months'
+        elif (interval == 'quarterly'):
+            nt = 4
+            time_units = 'quarters'
         # output mask dataset for year
         output = pc.grid.mosaic()
         output.update_spacing(mask)
@@ -111,37 +148,44 @@ def combine_icelines_fronts(base_dir, regions,
         for region in regions:
             # regular expression pattern for finding files and
             # extracting information from file names
-            regex_pattern = rf'({region})_({y:4d})\-(\d{{2}})\-(\d{{2}}).tif$'
-            rx = re.compile(regex_pattern, re.VERBOSE | re.IGNORECASE)
+            if (interval == 'quarterly'):
+                pattern = rf'({region})_({y:4d})Q(\d+).tif$'
+                rx = re.compile(pattern, re.VERBOSE | re.IGNORECASE)
+            else:
+                pattern = rf'({region})_({y:4d})\-(\d{{2}})\-(\d{{2}}).tif$'
+                rx = re.compile(pattern, re.VERBOSE | re.IGNORECASE)
             # directory for region masks
-            directory = os.path.join(base_dir, region)
+            directory = base_dir.joinpath(region)
             # find mask files for region
-            mask_files = [f for f in os.listdir(directory) if rx.match(f)]
+            mask_files = [f for f in directory.iterdir() if rx.match(f.name)]
             # for each mask file
-            for m in sorted(mask_files):
-                # read regional mask
-                reg, YY, MM, DD = rx.findall(m).pop()
-                region_file = os.path.join(directory, m)
-                region = pc.grid.data().from_geotif(region_file)
-                region.z = np.nan_to_num(region.z, nan=0).astype(np.uint8)
-                # get image coordinate of regional mask
-                indy, indx = output.image_coordinates(region)
+            for region_file in sorted(mask_files):
                 # get temporal coordinate of regional mask
                 if (interval == 'daily'):
+                    reg, YY, MM, DD = rx.findall(region_file.name).pop()
                     indt = np.sum(dpm[:int(MM) - 1]) + int(DD) - 1
                 elif (interval == 'monthly'):
+                    reg, YY, MM, DD = rx.findall(region_file.name).pop()
                     indt = int(MM) - 1
+                elif (interval == 'quarterly'):
+                    reg, YY, Q = rx.findall(region_file.name).pop()
+                    indt = int(Q) - 1
+                # read regional mask
+                region = pc.grid.data().from_geotif(str(region_file))
+                region.z = np.nan_to_num(region.z, nan=0).astype(np.uint8)
+                # get image coordinate of regional mask
+                indy, indx = output.image_coordinates(region)                
                 # update mask
                 for t in range(indt, nt):
                     output.mask[indy, indx, t] = region.z[:,:]
 
         # output to netCDF4
-        output_file = f'antarctic_icelines_mask_{y:4d}.nc'
-        output.to_nc(os.path.join(base_dir, output_file),
+        output_file = base_dir.joinpath(f'antarctic_icelines_mask_{y:4d}.nc')
+        output.to_nc(str(output_file),
             replace=True, attributes=attributes,
             srs_wkt=crs.to_wkt())
         # change the permissions mode
-        os.chmod(os.path.join(base_dir, output_file), mode)
+        output_file.chmod(mode=mode)
         # save final mask for initializing the next iteration
         temp = np.copy(output.mask[:,:,-1])
 
@@ -157,15 +201,18 @@ def arguments():
     # command line parameters
     # working data directory for location of ice fronts
     parser.add_argument('--directory','-D',
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
-        default=os.getcwd(),
+        type=pathlib.Path, default=pathlib.Path.cwd(),
         help='Working data directory')
     parser.add_argument('--region','-R',
         required=True, type=str, nargs='+',
         help='Ice front regions')
     parser.add_argument('--mask-file', required=True,
-        type=lambda p: os.path.abspath(os.path.expanduser(p)),
+        type=pathlib.Path,
         help='Initial ice mask file')
+    parser.add_argument('--band','-b',
+        metavar='BAND', type=int,
+        default=0,
+        help='Time slice of mask file to use')
     # years of ice front data to run
     parser.add_argument('--year','-Y',
         type=int, nargs='+', default=[2021, 2022],
@@ -173,8 +220,8 @@ def arguments():
     # Time interval of ice front data to run
     parser.add_argument('--interval','-i',
         metavar='INTERVAL', type=str,
-        choices=('daily','monthly'), default='daily',
-        help='Time inverval of ice front data to run')
+        choices=('daily','monthly','quarterly'), default='daily',
+        help='Time interval of ice front data to run')
     # print information about processing run
     parser.add_argument('--verbose','-V',
         action='count', default=0,

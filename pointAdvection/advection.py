@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley and Ben Smith (05/2023)
+Written by Tyler Sutterley and Ben Smith (04/2024)
 Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
@@ -22,8 +22,10 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 04/2024: added base level attribute for time units
     Updated 05/2023: add fill gaps function and xy0 interpolator
         add option to advect parcels to set the number of steps directly
+        using pathlib to define and expand paths
     Updated 03/2023: added function for extracting from a dictionary
         verify input times are float64 arrays
         set default interpolator to linear regular grid
@@ -50,6 +52,7 @@ import io
 import re
 import copy
 import logging
+import pathlib
 import warnings
 import numpy as np
 import scipy.interpolate
@@ -60,9 +63,15 @@ import time
 # attempt imports
 try:
     import pointCollection as pc
-except (ImportError, ModuleNotFoundError) as exc:
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
     warnings.filterwarnings("module")
     warnings.warn("pointCollection not available", ImportWarning)
+# attempt imports
+try:
+    import timescale
+except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+    warnings.filterwarnings("module")
+    warnings.warn("timescale not available", ImportWarning)
 # ignore warnings
 warnings.filterwarnings("ignore")
 
@@ -95,19 +104,19 @@ class advection():
         input filename of velocity file
     integrator: str
         Advection function
-
             - ``'euler'``
             - ``'RK4'``
             - ``'RKF45'``
     method: str, default 'linear'
         Interpolation method for velocities
-
             - ``'bilinear'``: quick bilinear interpolation
             - ``'spline'``: scipy bivariate spline interpolation
             - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
             - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
     interpolant: obj
         Interpolation function for velocity fields
+    time_units: str, default 'years'
+        Temporal units for advection
     fill_value: float or NoneType, default np.nan
         invalid value for output data
     """
@@ -120,6 +129,7 @@ class advection():
         kwargs.setdefault('t0', 0.0)
         kwargs.setdefault('integrator', 'RK4')
         kwargs.setdefault('method', 'linear')
+        kwargs.setdefault('time_units', 'years')
         kwargs.setdefault('fill_value', np.nan)
         # set default class attributes
         self.x=np.atleast_1d(kwargs['x']).astype('f8')
@@ -134,6 +144,8 @@ class advection():
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
+        self.xy0_interpolator=None
+        self.time_units=copy.copy(kwargs['time_units'])
         self.fill_value=kwargs['fill_value']
 
     def __update_streak__(self, t, **kwargs):
@@ -145,13 +157,15 @@ class advection():
             self.streak['y'] += [self.y0.copy()]
             self.streak['t'] += [t.copy()]
 
-    def case_insensitive_filename(self, filename: str | io.BytesIO):
+    def case_insensitive_filename(self,
+            filename: str | pathlib.Path | io.BytesIO
+        ):
         """
         Searches a directory for a filename without case dependence
 
         Parameters
         ----------
-        filename: str
+        filename: str, pathlib.Path, or io.BytesIO
             input filename
         """
         # check if filename is open file object
@@ -159,34 +173,33 @@ class advection():
             self.filename = copy.copy(filename)
         else:
             # tilde-expand input filename
-            self.filename = os.path.expanduser(filename)
+            self.filename = pathlib.Path(filename).expanduser().absolute()
             # check if file presently exists with input case
-            if not os.access(self.filename,os.F_OK):
+            if not self.filename.exists():
                 # search for filename without case dependence
-                basename = os.path.basename(filename)
-                directory = os.path.dirname(os.path.expanduser(filename))
-                f = [f for f in os.listdir(directory) if re.match(basename,f,re.I)]
+                f = [f.name for f in self.filename.parent.iterdir() if
+                    re.match(self.filename.name, f.name, re.I)]
                 if not f:
                     errmsg = f'{filename} not found in file system'
                     raise FileNotFoundError(errmsg)
-                self.filename = os.path.join(directory,f.pop())
+                self.filename = self.filename.with_name(f.pop())
+            # convert filename to string
+            self.filename = str(self.filename)
         # print filename
         logging.debug(self.filename)
         return self
 
     # PURPOSE: read geotiff velocity file and extract x and y velocities
     def from_geotiff(self,
-            filename: str | io.IOBase,
-            bounds: list | np.ndarray | None = None,
-            buffer: float | None = 5e4,
-            scale: float = 1.0/31557600.0
+            filename: str | pathlib.Path | io.BytesIO,
+            **kwargs
         ):
         """
         Read geotiff velocity file and extract x and y velocities
 
         Parameters
         ----------
-        filename: str
+        filename: str or pathlib.Path
             geotiff velocity file
         bounds: list or NoneType, default None
             boundaries to read: ``[[xmin, xmax], [ymin, ymax]]``
@@ -194,21 +207,36 @@ class advection():
             If not specified, can read around input points
         buffer: float or NoneType, default 5e4
             Buffer around input points for extracting velocity fields
-        scale: float, default 1.0/31557600.0
-            scaling factor for converting velocities to m/s
-
-            defaults to converting from m/yr
+        scale: float, default None
+            scaling factor for converting velocities to common units
         """
+        # set default keyword arguments
+        kwargs.setdefault('bounds', None)
+        kwargs.setdefault('buffer', 5e4)
+        kwargs.setdefault('scale', 1.0)
+        # check input arguments
+        assert isinstance(filename, (str, pathlib.Path)), \
+            'filename must be a string or file object'
+        assert isinstance(kwargs['bounds'], (list, np.ndarray, type(None))), \
+            'bounds must be an iterable or None'
+        assert isinstance(kwargs['buffer'], (float, type(None))), \
+            'buffer must be a float or None'
+        assert isinstance(kwargs['scale'], (int, float)), \
+            'scale must be an int or float'
         # find input geotiff velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        if (bounds is None) and (buffer is not None):
-            bounds = self.buffered_bounds(buffer)
+        if (kwargs['bounds'] is None) and (kwargs['buffer'] is not None):
+            bounds = self.buffered_bounds(kwargs['buffer'])
+        else:
+            bounds = kwargs['bounds']
+        # set scale for converting velocities to common units
+        scale = np.float64(kwargs['scale'])
         # read input velocity file from geotiff
         UV = pc.grid.data().from_geotif(self.filename,
             bands=[1,2], bounds=bounds)
         # return the input velocity field as new point collection object
-        # use scale to convert from m/yr to m/s
+        # use scale to convert to common units
         self.velocity = pc.grid.data().from_dict(dict(x=UV.x, y=UV.y,
             U=UV.z[:,:,0]*scale, V=UV.z[:,:,1]*scale))
         # copy projection from geotiff to output pc object
@@ -251,18 +279,38 @@ class advection():
             If not specified, can read around input points
         buffer: float or NoneType, default 5e4
             Buffer around input points for extracting velocity fields
-        scale: float, default 1.0/31557600.0
-            scaling factor for converting velocities to m/s
-
-            defaults to converting from m/yr
+        scale: float, default None
+            scaling factor for converting velocities to common units
         """
         if self.x is None or not np.any(np.isfinite(self.x)):
             raise(ValueError('need to assign x and y before reading velocities'))
+        # set default keyword arguments
+        kwargs.setdefault('field_mapping', {'U':'VX', 'V':'VY'})
+        kwargs.setdefault('group', None)
+        kwargs.setdefault('bounds', None)
+        kwargs.setdefault('buffer', 5e4)
+        kwargs.setdefault('scale', 1.0)
+        # check input arguments
+        assert isinstance(filename, (str, pathlib.Path)), \
+            'filename must be a string or file object'
+        assert isinstance(kwargs['field_mapping'], dict), \
+            'field_mapping must be a dictionary'
+        assert isinstance(kwargs['bounds'], (list, np.ndarray, type(None))), \
+            'bounds must be an iterable or None'
+        assert isinstance(kwargs['buffer'], (float, type(None))), \
+            'buffer must be a float or None'
+        assert isinstance(kwargs['scale'], (int, float)), \
+            'scale must be an int or float'
+
         # find input netCDF4 velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
-        if (bounds is None) and (buffer is not None):
-            bounds = self.buffered_bounds(buffer)
+        if (kwargs['bounds'] is None) and (kwargs['buffer'] is not None):
+            bounds = self.buffered_bounds(kwargs['buffer'])
+        else:
+            bounds = kwargs['bounds']
+        # set scale for converting velocities to common units
+        scale = np.float64(kwargs['scale'])
         # read input velocity file from netCDF4
 
         self.velocity = pc.grid.data().from_nc(self.filename,
@@ -276,6 +324,7 @@ class advection():
             self.velocity.assign(eU=temp.ERRX, eV=temp.ERRY)
         except Exception:
             pass
+
         # attempt to set dimensions if not current attribute
         try:
             setattr(self.velocity, 'ndim', self.velocity.U.ndim)
@@ -297,7 +346,7 @@ class advection():
             (self.velocity.V.data == self.velocity.fill_value))
         # check if any grid values are nan
         mask |= np.isnan(self.velocity.U.data) | np.isnan(self.velocity.V.data)
-        # use scale to convert from m/yr to m/s
+        # use scale to convert to common units
         self.velocity.U = scale*np.array(self.velocity.U, dtype=float)
         self.velocity.V = scale*np.array(self.velocity.V, dtype=float)
         if hasattr(self.velocity, 'eU'):
@@ -321,10 +370,7 @@ class advection():
     # PURPOSE: create an advection object from an input dictionary
     def from_dict(self,
             D_dict: dict,
-            bounds: list | np.ndarray | None = None,
-            buffer: float | None = None,
-            scale: float = 1.0/31557600.0,
-            t_axis: int = 0
+            **kwargs
         ):
         """
         Create an advection object from an input dictionary
@@ -339,17 +385,32 @@ class advection():
             If not specified, can read around input points
         buffer: float or NoneType, default None
             Buffer around input points for extracting velocity fields
-        scale: float, default 1.0/31557600.0
-            scaling factor for converting velocities to m/s
-
-            defaults to converting from m/yr
+        scale: float, default None
+            scaling factor for converting velocities to common units
         """
+        # set default keyword arguments
+        kwargs.setdefault('bounds', None)
+        kwargs.setdefault('buffer', None)
+        kwargs.setdefault('scale', 1.0)
+        kwargs.setdefault('t_axis', 0)
+        # check input arguments
+        assert isinstance(kwargs['bounds'], (list, np.ndarray, type(None))), \
+            'bounds must be an iterable or None'
+        assert isinstance(kwargs['buffer'], (float, type(None))), \
+            'buffer must be a float or None'
+        assert isinstance(kwargs['scale'], (int, float)), \
+            'scale must be an int or float'
+        assert isinstance(kwargs['t_axis'], int), \
+            't_axis must be a int'
         # read input velocity file from netCDF4
-        self.velocity = pc.grid.data(t_axis=t_axis).from_dict(D_dict)
+        self.velocity = pc.grid.data(t_axis=kwargs['t_axis']).from_dict(D_dict)
         # x and y limits (buffered maximum and minimum)
-        if (bounds is None) and (buffer is not None):
-            # x and y limits (buffered maximum and minimum)
-            bounds = self.buffered_bounds(buffer)
+        if (kwargs['bounds'] is None) and (kwargs['buffer'] is not None):
+            bounds = self.buffered_bounds(kwargs['buffer'])
+        else:
+            bounds = kwargs['bounds']
+        # set scale for converting velocities to common units
+        scale = np.float64(kwargs['scale'])
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
@@ -374,7 +435,7 @@ class advection():
             (self.velocity.V.data == self.velocity.fill_value))
         # check if any grid values are nan
         mask |= np.isnan(self.velocity.U.data) | np.isnan(self.velocity.V.data)
-        # use scale to convert from m/yr to m/s
+        # use scale to convert to common units
         self.velocity.U = scale*np.array(self.velocity.U, dtype=float)
         self.velocity.V = scale*np.array(self.velocity.V, dtype=float)
         if hasattr(self.velocity, 'eU'):
@@ -398,10 +459,7 @@ class advection():
     # PURPOSE: build a data object from a list of other data objects
     def from_list(self,
             D_list: list,
-            sort: bool = False,
-            bounds: list | np.ndarray | None = None,
-            buffer: float | None = None,
-            scale: float = 1.0/31557600.0,
+            **kwargs
         ):
         """
         Build a data object from a list of other data objects
@@ -418,15 +476,30 @@ class advection():
             If not specified, can read around input points
         buffer: float or NoneType, default None
             Buffer around input points for extracting velocity fields
-        scale: float, default 1.0/31557600.0
-            scaling factor for converting velocities to m/s
-
-            defaults to converting from m/yr
+        scale: float or NoneType, default None
+            scaling factor for converting velocities common units
         """
+        # set default keyword arguments
+        kwargs.setdefault('sort', False)
+        kwargs.setdefault('bounds', None)
+        kwargs.setdefault('buffer', None)
+        kwargs.setdefault('scale', 1.0)
+        # check input arguments
+        assert isinstance(kwargs['sort'], bool), \
+            'sort must be a boolean'
+        assert isinstance(kwargs['bounds'], (list, np.ndarray, type(None))), \
+            'bounds must be an iterable or None'
+        assert isinstance(kwargs['buffer'], (float, type(None))), \
+            'buffer must be a float or None'
+        assert isinstance(kwargs['scale'], (int, float)), \
+            'scale must be an int or float'
         # x and y limits (buffered maximum and minimum)
-        if (bounds is None) and (buffer is not None):
-            # x and y limits (buffered maximum and minimum)
-            bounds = self.buffered_bounds(buffer)
+        if (kwargs['bounds'] is None) and (kwargs['buffer'] is not None):
+            bounds = self.buffered_bounds(kwargs['buffer'])
+        else:
+            bounds = kwargs['bounds']
+        # set scale for converting velocities to common units
+        scale = np.float64(kwargs['scale'])
         # read input velocity data from grid objects
         v_list=[]
         for Di in D_list:
@@ -436,14 +509,15 @@ class advection():
                 scale=1.
             else:
                 v_list += [Di]
-        self.velocity = pc.grid.data().from_list(v_list, sort=sort)
+        self.velocity = pc.grid.data().from_list(v_list, sort=kwargs['sort'])
+
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
         # attempt to set dimensions if not current attribute
         try:
             setattr(self.velocity, 'ndim', self.velocity.U.ndim)
-        except AttributeError as exc:
+        except AttributeError:
             pass
         # swap orientation of axes
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
@@ -456,7 +530,7 @@ class advection():
                 self.velocity.eV = np.transpose(self.velocity.eV, axes=(1,2,0))
             # update time dimension axis
             self.velocity.t_axis = 2
-        # use scale to convert from m/yr to m/s
+        # use scale to convert to common units
         self.velocity.U *= scale
         self.velocity.V *= scale
         if hasattr(self.velocity, 'eU'):
@@ -487,16 +561,11 @@ class advection():
         velocity in a previous or subsequent year, or from the average of the
         previous and subsequent years.  If not, fill the velocity with the mean
         velocity field.
-
-        Returns
-        -------
-        None.
-
         """
         # calculate an error-weighted average of the velocities
-        v=self.velocity.copy()
-        wU=1/v.eU**2/np.nansum(1/v.eU**2, axis=2)[:,:,None]
-        wV=1/v.eV**2/np.nansum(1/v.eV**2, axis=2)[:,:,None]
+        v = self.velocity.copy()
+        wU = 1/v.eU**2/np.nansum(1/v.eU**2, axis=2)[:,:,None]
+        wV = 1/v.eV**2/np.nansum(1/v.eV**2, axis=2)[:,:,None]
         vbar=pc.grid.data().from_dict({'x':np.array(v.x),
                                'y':np.array(v.y),
                                'U':np.nansum(wU*v.U, axis=2),
@@ -506,14 +575,14 @@ class advection():
         # the velocity from one year prior and that from one year later.
         # if one or the other of these is missing, use valid values from the
         # slice that is present.
-        v_filled=self.velocity.copy()
+        v_filled = self.velocity.copy()
 
-        delta_year=float(24*3600*365)
-        delta_tol = 24*3600*365/8
+        delta_year = timescale.time._to_sec['years']/self._to_sec
+        delta_tol = delta_year/8
 
         for ii in range(v.U.shape[2]-1):
-            this_U=v.U[:,:,ii].copy()
-            this_V=v.V[:,:,ii].copy()
+            this_U = v.U[:,:,ii].copy()
+            this_V = v.V[:,:,ii].copy()
             u_temp = np.zeros_like(this_U)
             v_temp = np.zeros_like(this_U)
             w_temp = np.zeros_like(this_U)
@@ -650,7 +719,8 @@ class advection():
         Parameters
         ----------
         bounds : iterable, optional
-            bounds of the interpolation domain.  Can be specified as two iterables
+            bounds of the interpolation domain.
+            Can be specified as two iterables
             (x, y) or three (x, y, t). The default is None.
         t_range : iterable, optional
             time range for the interpolation, in velocity time units (seconds relative
@@ -661,19 +731,22 @@ class advection():
             the time values in the velocity object will be used. The default is None.
         advection_time_step : float, optional
             The time step to use in parcel tracking, in days.  The default is 5.
-
         Returns
         -------
         grid_obj : pc.grid.data
              grid object with fields x0 and y0 containing positions at the epoch for parcels starting at x, y, t
         """
+        # default time range is the maximum range of the velocity field
         if t_range is None:
             t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
+        # default bounds are the bounds of the velocity field
+        # plus the time range
         if bounds is None:
-            bounds=self.velocity.bounds() + [t_range]
-        else:
-            if len(bounds)==2:
-                bounds += [t_range]
+            bounds = self.velocity.bounds() + [t_range]
+        elif (bounds is not None) and (len(bounds) == 2):
+            bounds += [t_range]
+        # use the time from the velocity field
+        # or calculate the time using the the specified time step
         if t_step is None:
             # use the times on the velocity object
             ti = self.velocity.t
@@ -709,7 +782,7 @@ class advection():
                         self.y0 *= np.NaN
                     x_init[rows, cols, t_ind] = self.x0.reshape(xg_sub.shape)
                     y_init[rows, cols, t_ind] = self.y0.reshape(xg_sub.shape)
-                        
+
 
         grid_obj = pc.grid.data().from_dict({'x':x0, 'y':y0,'t':ti,'x0':x_init,'y0':y_init})
 
@@ -736,7 +809,7 @@ class advection():
                 - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
                 - ``'linearND'``, ``'nearestND'``: scipy unstructured N-dimensional interpolations
         step: int or float, default 1
-            Temporal step size in days
+            Temporal step size for advection
         N: int or NoneType, default None
             Number of integration steps
 
@@ -761,26 +834,27 @@ class advection():
             self.method = copy.copy(kwargs['method'])
         if (kwargs['t0'] != self.t0):
             self.t0 = np.copy(kwargs['t0'])
-        # advect the parcel every step days
+        # advect the parcel every step
         # (using closest number of iterations)
-        seconds = (kwargs['step']*86400.0)
+        step = np.float64(kwargs['step'])
         # set or calculate the number of steps to advect the dataset
         if kwargs['N'] is not None:
             n_steps = np.copy(kwargs['N'])
         elif (np.min(self.t0) < np.min(self.t)):
             # maximum number of steps to advect backwards in time
-            n_steps = np.abs(np.max(self.t) - np.min(self.t0))/seconds
+            n_steps = np.abs(np.max(self.t) - np.min(self.t0))/step
         elif (np.max(self.t0) > np.max(self.t)):
             # maximum number of steps to advect forward in time
-            n_steps = np.abs(np.max(self.t0) - np.min(self.t))/seconds
+            n_steps = np.abs(np.max(self.t0) - np.min(self.t))/step
         elif (np.ndim(self.t0) == 0) or (np.ndim(self.t) == 0):
             # maximum number of steps between the two datasets
-            n_steps = np.max(np.abs(self.t0 - self.t))/seconds
+            n_steps = np.max(np.abs(self.t0 - self.t))/step
         else:
             # average number of steps between the two datasets
-            n_steps = np.abs(np.mean(self.t0) - np.mean(self.t))/seconds
+            n_steps = np.abs(np.mean(self.t0) - np.mean(self.t))/step
         # check input advection functions
-        kwargs.update({'N':np.int64(n_steps)})
+        kwargs.update({'N': np.int64(n_steps)})
+        logging.debug(f'Advecting {n_steps} steps')
         if (self.integrator == 'euler'):
             # euler: Explicit Euler method
             return self.euler(**kwargs)
@@ -1041,7 +1115,7 @@ class advection():
         if (ypts.ndim != 1):
             raise ValueError('Y coordinates of polygon not a vector.')
         if (len(xpts) != len(ypts)):
-            raise ValueError('Incompatable vector dimensions.')
+            raise ValueError('Incompatible vector dimensions.')
         # maximum possible number of vertices in polygon
         N = len(xpts)
         # Close the polygon if not already closed
@@ -1236,7 +1310,8 @@ class advection():
     def regular_grid_interpolation(self, **kwargs):
         """
         Interpolate U and V velocities to coordinates using
-            regular grid interpolation
+        regular grid interpolation
+
         Can use time-variable ``U`` and ``V`` velocities
 
         Parameters
@@ -1318,7 +1393,7 @@ class advection():
     def unstructured_interpolation(self, **kwargs):
         """
         Interpolate unstructured U and V velocities to coordinates using
-            N-dimensional interpolation functions
+        N-dimensional interpolation functions
 
         Parameters
         ----------
@@ -1399,13 +1474,13 @@ class advection():
                 self.velocity.time, np.arange(nt), kind='linear')
         # evaluate at points
         if (self.velocity.ndim == 1):
-            # evalulate using invariant velocities
+            # evaluate using invariant velocities
             U[v] = self.interpolant['U'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
             V[v] = self.interpolant['V'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
         else:
-            # evalulate using time-variable velocities
+            # evaluate using time-variable velocities
             UT = self.interpolant['U'].__call__(
                 np.c_[kwargs['x'][v], kwargs['y'][v]])
             VT = self.interpolant['V'].__call__(
@@ -1710,3 +1785,16 @@ class advection():
         gridx,gridy = np.meshgrid(self.velocity.x*xy_scale, self.velocity.y*xy_scale)
         sp = ax.streamplot(gridx, gridy, U, V, density=density, color=color, **kwargs)
         return sp
+
+    def copy(self):
+        """
+        Returns a copy of the object
+        """
+        return copy.deepcopy(self)
+
+    @property
+    def _to_sec(self):
+        """
+        Converts time to seconds
+        """
+        return timescale.time._to_sec[self.time_units]
