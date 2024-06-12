@@ -95,8 +95,9 @@ class advection():
         Ending time for advection
     velocity: obj
         ``pointCollection`` object of velocity fields
-
         Can be type ``grid`` or ``mesh``
+    vel_mean: obj
+        ``pointCollection`` object of mean velocity field
     streak: dict
         path traversed during advection (set kwarg 'streak' to true
                         in translate methods to enable)
@@ -144,9 +145,9 @@ class advection():
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
-        self.xy0_interpolator=None
         self.time_units=copy.copy(kwargs['time_units'])
         self.fill_value=kwargs['fill_value']
+        self.vel_mean=None
 
     def __update_streak__(self, t, **kwargs):
         """
@@ -552,75 +553,163 @@ class advection():
         setattr(self.velocity, 'type', 'grid')
         return self
 
-    # PURPOSE: fill in holes in velocity maps
-    def fill_velocity_gaps(self):
+    # PURPOSE: calculate the mean velocity field
+    def calc_vel_mean(self, velocity=None, w_smooth=None):
         """
-        Fill in gaps in the velocity field.
+            Calculate a mean velocity field
 
-        First, check if the velocity at a point and time can be filled from the
-        velocity in a previous or subsequent year, or from the average of the
-        previous and subsequent years.  If not, fill the velocity with the mean
-        velocity field.
-        """
+            Parameters
+            ----------
+            velocity: pc.grid.data, optional
+                If specified, the mean velocity will be calculated from this,
+                otherwise self.velocity will be used
+            w_smooth : float, optional
+                If specified, gaps in the velocity field will be filed with a Gaussian
+                smoothing of this width. The default is None.
+
+            Returns
+            -------
+            pointCollection.grid.data.
+                error-weighted mean velocity.
+
+            """
         # calculate an error-weighted average of the velocities
         v = self.velocity.copy()
         wU = 1/v.eU**2/np.nansum(1/v.eU**2, axis=2)[:,:,None]
         wV = 1/v.eV**2/np.nansum(1/v.eV**2, axis=2)[:,:,None]
-        vbar=pc.grid.data().from_dict({'x':np.array(v.x),
+        vel_mean=pc.grid.data().from_dict({'x':np.array(v.x),
                                'y':np.array(v.y),
                                'U':np.nansum(wU*v.U, axis=2),
-                               'V':np.nansum(wV*v.V, axis=2)})
+                               'V':np.nansum(wV*v.V, axis=2),
+                               'eU':np.sqrt(np.nansum(wU**2*v.eU**2, axis=2)),
+                               'eV':np.sqrt(np.nansum(wV**2*v.eV**2, axis=2))})
+        bad = np.sum(np.isfinite(wU), axis=2)==0
+        for field in ['U','V']:
+            getattr(vel_mean, field)[bad]=np.NaN
+        # fill gaps in vel_mean
+        if w_smooth is not None:
+            vel_mean.fill_smoothed(fields=['U','V', 'eU', 'eV'], w_smooth=w_smooth)
+
+        return vel_mean
+
+    # PURPOSE: fill in holes in velocity maps
+    def fill_velocity_gaps(self, velocity=None, annual=True, w_smooth=None, vel_mean=None):
+        """
+        Fill in gaps in the velocity field.
+
+                Parameters
+                ----------
+                velocity : pointCollection.grid.data, optional
+                    if specified, mean velocity field will be calculated from
+                    this field, otherwise, self.velocity will be used
+                annual : Boolean, optional
+                    If True, will attempt to fill velocity gaps with the average
+                    of the previous and next year's value.
+                w_smooth : float, optional
+                    If specified, gaps in the velocity field will be filed with a Gaussian
+                    smoothing of this width. The default is None.
+                vel_mean : pointCollection.grid.data, optional
+                    If specified, this will be used as the mean velocity estimate,
+                    otherwise will be calculated from the velocity field
+
+                Returns
+                -------
+                None.
+
+                """
 
         # attempt to fill in gaps in each velocity field with the average of
         # the velocity from one year prior and that from one year later.
         # if one or the other of these is missing, use valid values from the
-        # slice that is present.
+        # slice that is present
+        v=self.velocity.copy()
         v_filled = self.velocity.copy()
 
-        delta_year = timescale.time._to_sec['years']/self._to_sec
-        delta_tol = delta_year/8
+        if annual:
+            # attempt to fill data gaps with values one year before and after
+            delta_year = timescale.time._to_sec['years']/self._to_sec
+            delta_tol = delta_year/8
 
         for ii in range(v.U.shape[2]-1):
             this_U = v.U[:,:,ii].copy()
             this_V = v.V[:,:,ii].copy()
+            this_eU = v.eU[:,:,ii].copy()
+            this_eV = v.eV[:,:,ii].copy()
             u_temp = np.zeros_like(this_U)
             v_temp = np.zeros_like(this_U)
+            eu2_temp = np.zeros_like(this_U)
+            ev2_temp = np.zeros_like(this_U)
             w_temp = np.zeros_like(this_U)
-            for dt in [-delta_tol, delta_tol]:
-                other_year = np.argmin(np.abs(v.time[ii]+delta_year-v.time))
-                if np.abs((v.time[other_year]-v.time[ii]).astype(float)) > delta_tol:
-                    continue
-                good = np.isfinite(v.U[:,:,other_year])
-                u_temp[good] += v.U[:,:,other_year][good]
-                v_temp[good] += v.V[:,:,other_year][good]
-                w_temp[good] += 1
+            if annual:
+                for dt in [-delta_tol, delta_tol]:
+                    # try to calculate the average of the previous year and the
+                    # next year
+                    other_year = np.argmin(np.abs(v.time[ii]+delta_year-v.time))
+                    if np.abs((v.time[other_year]-v.time[ii]).astype(float)) > delta_tol:
+                        continue
+                    good = np.isfinite(v.U[:,:,other_year])
+                    u_temp[good] += v.U[:,:,other_year][good]
+                    v_temp[good] += v.V[:,:,other_year][good]
+                    eu2_temp[good] += v.eU[:,:,other_year][good]**2
+                    ev2_temp[good] += v.eV[:,:,other_year][good]**2
+                    w_temp[good] += 1
+            else:
+                for jj in [ii-1, ii+1]:
+                    # try to build the average of the previous time slice and the
+                    # next time slice
+                    if jj > 0 and jj < v.U.shape[2]:
+                        good = np.isfinite(v.U[:,:,jj])
+                        u_temp[good] += v.U[:,:,jj][good]
+                        v_temp[good] += v.V[:,:,jj][good]
+                        eu2_temp[good] += v.eU[:,:,jj][good]**2
+                        ev2_temp[good] += v.eV[:,:,jj][good]**2
+                        w_temp[good] += 1
             u_temp[w_temp > 0] /= w_temp[w_temp>0]
             v_temp[w_temp > 0] /= w_temp[w_temp>0]
+            eu2_temp[w_temp > 0] /= w_temp[w_temp>0]
+            ev2_temp[w_temp > 0] /= w_temp[w_temp>0]
             to_replace = ((~np.isfinite(this_U)) & (w_temp>0)).ravel()
             if np.any(to_replace):
                 this_U.ravel()[to_replace] = u_temp.ravel()[to_replace]
                 this_V.ravel()[to_replace] = v_temp.ravel()[to_replace]
+                this_eU.ravel()[to_replace] = np.sqrt(eu2_temp.ravel()[to_replace])
+                this_eV.ravel()[to_replace] = np.sqrt(ev2_temp.ravel()[to_replace])
             v_filled.U[:,:,ii]=this_U
             v_filled.V[:,:,ii]=this_V
+            v_filled.eU[:,:,ii]=this_eU
+            v_filled.eV[:,:,ii]=this_eV
+
+        if vel_mean is None:
+            vel_mean=self.calc_vel_mean(velocity=v_filled, w_smooth=w_smooth)
 
         # fill in the remaining gaps using the mean velocity field
         for ii in range(v.U.shape[2]):
-            this_U=v.U[:,:,ii].copy()
-            this_V=v.V[:,:,ii].copy()
+            this_U=v_filled.U[:,:,ii].copy()
+            this_V=v_filled.V[:,:,ii].copy()
             to_replace = (~np.isfinite(this_U)).ravel()
+            this_eU=v_filled.eU[:,:,ii].copy()
+            this_eV=v_filled.eV[:,:,ii].copy()
             if np.any(to_replace):
-                this_U.ravel()[to_replace] = vbar.U.ravel()[to_replace]
-                this_V.ravel()[to_replace] = vbar.V.ravel()[to_replace]
+                this_U.ravel()[to_replace] = vel_mean.U.ravel()[to_replace]
+                this_V.ravel()[to_replace] = vel_mean.V.ravel()[to_replace]
+                this_eU.ravel()[to_replace] = vel_mean.eU.ravel()[to_replace]
+                this_eV.ravel()[to_replace] = vel_mean.eV.ravel()[to_replace]
+
+            else:
+                continue
             v_filled.U[:,:,ii]=this_U
             v_filled.V[:,:,ii]=this_V
+            v_filled.eU[:,:,ii]=this_eU
+            v_filled.eV[:,:,ii]=this_eV
 
         self.velocity.V = v_filled.V
         self.velocity.U = v_filled.U
-
+        self.velocity.eV = v_filled.eV
+        self.velocity.eU = v_filled.eU
 
     #PURPOSE: make interpolation objects to allow fast interpolation final displacements
     def xy1_interpolator(self, bounds=None, t_range=None, t_step=None, blocksize=100,
-                         advection_time_step=5, report_progress=False):
+                         advection_time_step=0.25, report_progress=False):
         '''
         Make interpolation objects for the final position of parcels.
 
@@ -634,10 +723,10 @@ class advection():
             to the epoch.  If None, the time bounds of the velocity
             data is used. The default is None.
         t_step : float, optional
-            time step, in seconds.  If None, the time values in the
+            time step, in time_units.  If None, the time values in the
             velocity data are used.. The default is None.
         advection_time_step : float, optional
-            reference time step for the advection object to use.  The default is 5 (days)
+            reference time step for the advection object to use.  The default is 0.25 (years)
         blocksize: int, optional
             grid will be divided into blocks of this size, or run all at once if None
 
@@ -688,7 +777,7 @@ class advection():
                     for this_ind in these:
                         self.t0=ti[this_ind]
                         try:
-                            self.translate_parcel(step=5 )
+                            self.translate_parcel(step=advection_time_step)
                         except ValueError:
                             # ValueError is thrown when all points are outside the velocity map
                             self.x0 *= np.NaN
@@ -727,7 +816,7 @@ class advection():
                 to epoch).  If not specified, the time range of self.velocity
                 will be used.  The default is None.
         t_step : float, optional
-            The time step for the interpolation, in seconds.  If None,
+            The time step for the interpolation, in time_units.  If None,
             the time values in the velocity object will be used. The default is None.
         advection_time_step : float, optional
             The time step to use in parcel tracking, in days.  The default is 5.
