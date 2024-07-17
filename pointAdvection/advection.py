@@ -59,6 +59,7 @@ import scipy.interpolate
 import scipy.spatial
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
+import time
 # attempt imports
 try:
     import pointCollection as pc
@@ -94,8 +95,9 @@ class advection():
         Ending time for advection
     velocity: obj
         ``pointCollection`` object of velocity fields
-
         Can be type ``grid`` or ``mesh``
+    vel_mean: obj
+        ``pointCollection`` object of mean velocity field
     streak: dict
         path traversed during advection (set kwarg 'streak' to true
                         in translate methods to enable)
@@ -103,13 +105,11 @@ class advection():
         input filename of velocity file
     integrator: str
         Advection function
-
             - ``'euler'``
             - ``'RK4'``
             - ``'RKF45'``
     method: str, default 'linear'
         Interpolation method for velocities
-
             - ``'bilinear'``: quick bilinear interpolation
             - ``'spline'``: scipy bivariate spline interpolation
             - ``'linear'``, ``'nearest'``: scipy regular grid interpolations
@@ -145,9 +145,9 @@ class advection():
         self.integrator=copy.copy(kwargs['integrator'])
         self.method=copy.copy(kwargs['method'])
         self.interpolant={}
-        self.xy0_interpolator=None
         self.time_units=copy.copy(kwargs['time_units'])
         self.fill_value=kwargs['fill_value']
+        self.vel_mean=None
 
     def __update_streak__(self, t, **kwargs):
         """
@@ -223,7 +223,7 @@ class advection():
         assert isinstance(kwargs['buffer'], (float, type(None))), \
             'buffer must be a float or None'
         assert isinstance(kwargs['scale'], (int, float)), \
-            'scale must be an int or float' 
+            'scale must be an int or float'
         # find input geotiff velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
@@ -256,8 +256,12 @@ class advection():
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
     def from_nc(self,
-            filename: str | pathlib.Path | io.IOBase,
-            **kwargs
+            filename: str | io.IOBase,
+            field_mapping: dict = dict(U='VX', V='VY'),
+            group: str or None = None,
+            bounds: list | np.ndarray | None = None,
+            buffer: float | None = 5e4,
+            scale: float = 1.0/31557600.0, **kwargs
         ):
         """
         Read netCDF4 velocity file and extract x and y velocities
@@ -279,6 +283,8 @@ class advection():
         scale: float, default None
             scaling factor for converting velocities to common units
         """
+        if self.x is None or not np.any(np.isfinite(self.x)):
+            raise(ValueError('need to assign x and y before reading velocities'))
         # set default keyword arguments
         kwargs.setdefault('field_mapping', {'U':'VX', 'V':'VY'})
         kwargs.setdefault('group', None)
@@ -295,7 +301,8 @@ class advection():
         assert isinstance(kwargs['buffer'], (float, type(None))), \
             'buffer must be a float or None'
         assert isinstance(kwargs['scale'], (int, float)), \
-            'scale must be an int or float'        
+            'scale must be an int or float'
+
         # find input netCDF4 velocity file
         self.case_insensitive_filename(filename)
         # x and y limits (buffered maximum and minimum)
@@ -306,14 +313,23 @@ class advection():
         # set scale for converting velocities to common units
         scale = np.float64(kwargs['scale'])
         # read input velocity file from netCDF4
+
         self.velocity = pc.grid.data().from_nc(self.filename,
-            field_mapping=kwargs['field_mapping'],
-            group=kwargs['group'],
-            bounds=bounds)
+            field_mapping=field_mapping, group=group,
+            bounds=bounds, **kwargs)
+        # attempt to read the error terms
+        try:
+            temp = pc.grid.data().from_nc(self.filename,
+                fields=['ERRX','ERRY'], group=group,
+                bounds=bounds)
+            self.velocity.assign(eU=temp.ERRX, eV=temp.ERRY)
+        except Exception:
+            pass
+
         # attempt to set dimensions if not current attribute
         try:
             setattr(self.velocity, 'ndim', self.velocity.U.ndim)
-        except AttributeError as exc:
+        except AttributeError:
             pass
         # swap orientation of axes
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
@@ -384,9 +400,9 @@ class advection():
         assert isinstance(kwargs['buffer'], (float, type(None))), \
             'buffer must be a float or None'
         assert isinstance(kwargs['scale'], (int, float)), \
-            'scale must be an int or float'  
+            'scale must be an int or float'
         assert isinstance(kwargs['t_axis'], int), \
-            't_axis must be a int' 
+            't_axis must be a int'
         # read input velocity file from netCDF4
         self.velocity = pc.grid.data(t_axis=kwargs['t_axis']).from_dict(D_dict)
         # x and y limits (buffered maximum and minimum)
@@ -477,7 +493,7 @@ class advection():
         assert isinstance(kwargs['buffer'], (float, type(None))), \
             'buffer must be a float or None'
         assert isinstance(kwargs['scale'], (int, float)), \
-            'scale must be an int or float'    
+            'scale must be an int or float'
         # x and y limits (buffered maximum and minimum)
         if (kwargs['bounds'] is None) and (kwargs['buffer'] is not None):
             bounds = self.buffered_bounds(kwargs['buffer'])
@@ -486,16 +502,23 @@ class advection():
         # set scale for converting velocities to common units
         scale = np.float64(kwargs['scale'])
         # read input velocity data from grid objects
-        self.velocity = pc.grid.data().from_list(D_list,
-            sort=kwargs['sort']
-        )
+        v_list=[]
+        for Di in D_list:
+            if isinstance(Di, self.__class__):
+                v_list += [Di.velocity]
+                # if we are assembling from a set of advection objects, assume that scaling is already done
+                scale=1.
+            else:
+                v_list += [Di]
+        self.velocity = pc.grid.data().from_list(v_list, sort=kwargs['sort'])
+
         # crop grid data to bounds
         if bounds is not None:
             self.velocity.crop(bounds[0], bounds[1])
         # attempt to set dimensions if not current attribute
         try:
             setattr(self.velocity, 'ndim', self.velocity.U.ndim)
-        except AttributeError as exc:
+        except AttributeError:
             pass
         # swap orientation of axes
         if (self.velocity.t_axis == 0) and (self.velocity.ndim == 3):
@@ -530,73 +553,255 @@ class advection():
         setattr(self.velocity, 'type', 'grid')
         return self
 
-    # PURPOSE: fill in holes in velocity maps
-    def fill_velocity_gaps(self):
+    # PURPOSE: calculate the mean velocity field
+    def calc_vel_mean(self, velocity=None, w_smooth=None):
         """
-        Fill in gaps in the velocity field.
+            Calculate a mean velocity field
 
-        First, check if the velocity at a point and time can be filled from the
-        velocity in a previous or subsequent year, or from the average of the
-        previous and subsequent years.  If not, fill the velocity with the mean
-        velocity field.
-        """
+            Parameters
+            ----------
+            velocity: pc.grid.data, optional
+                If specified, the mean velocity will be calculated from this,
+                otherwise self.velocity will be used
+            w_smooth : float, optional
+                If specified, gaps in the velocity field will be filed with a Gaussian
+                smoothing of this width. The default is None.
+
+            Returns
+            -------
+            pointCollection.grid.data.
+                error-weighted mean velocity.
+
+            """
         # calculate an error-weighted average of the velocities
         v = self.velocity.copy()
         wU = 1/v.eU**2/np.nansum(1/v.eU**2, axis=2)[:,:,None]
         wV = 1/v.eV**2/np.nansum(1/v.eV**2, axis=2)[:,:,None]
-        vbar=pc.grid.data().from_dict({'x':np.array(v.x),
+        vel_mean=pc.grid.data().from_dict({'x':np.array(v.x),
                                'y':np.array(v.y),
                                'U':np.nansum(wU*v.U, axis=2),
-                               'V':np.nansum(wV*v.V, axis=2)})
+                               'V':np.nansum(wV*v.V, axis=2),
+                               'eU':np.sqrt(np.nansum(wU**2*v.eU**2, axis=2)),
+                               'eV':np.sqrt(np.nansum(wV**2*v.eV**2, axis=2))})
+        bad = np.sum(np.isfinite(wU), axis=2)==0
+        for field in ['U','V']:
+            getattr(vel_mean, field)[bad]=np.NaN
+        # fill gaps in vel_mean
+        if w_smooth is not None:
+            vel_mean.fill_smoothed(fields=['U','V', 'eU', 'eV'], w_smooth=w_smooth)
+
+        return vel_mean
+
+    # PURPOSE: fill in holes in velocity maps
+    def fill_velocity_gaps(self, velocity=None, annual=True, w_smooth=None, vel_mean=None):
+        """
+        Fill in gaps in the velocity field.
+
+                Parameters
+                ----------
+                velocity : pointCollection.grid.data, optional
+                    if specified, mean velocity field will be calculated from
+                    this field, otherwise, self.velocity will be used
+                annual : Boolean, optional
+                    If True, will attempt to fill velocity gaps with the average
+                    of the previous and next year's value.
+                w_smooth : float, optional
+                    If specified, gaps in the velocity field will be filed with a Gaussian
+                    smoothing of this width. The default is None.
+                vel_mean : pointCollection.grid.data, optional
+                    If specified, this will be used as the mean velocity estimate,
+                    otherwise will be calculated from the velocity field
+
+                Returns
+                -------
+                None.
+
+                """
 
         # attempt to fill in gaps in each velocity field with the average of
         # the velocity from one year prior and that from one year later.
         # if one or the other of these is missing, use valid values from the
-        # slice that is present.
+        # slice that is present
+        v=self.velocity.copy()
         v_filled = self.velocity.copy()
 
-        delta_year = timescale.time._to_sec['years']/self._to_sec
-        delta_tol = delta_year/8
+        if annual:
+            # attempt to fill data gaps with values one year before and after
+            delta_year = timescale.time._to_sec['years']/self._to_sec
+            delta_tol = delta_year/8
 
         for ii in range(v.U.shape[2]-1):
             this_U = v.U[:,:,ii].copy()
             this_V = v.V[:,:,ii].copy()
+            this_eU = v.eU[:,:,ii].copy()
+            this_eV = v.eV[:,:,ii].copy()
             u_temp = np.zeros_like(this_U)
             v_temp = np.zeros_like(this_U)
+            eu2_temp = np.zeros_like(this_U)
+            ev2_temp = np.zeros_like(this_U)
             w_temp = np.zeros_like(this_U)
-            for dt in [-delta_tol, delta_tol]:
-                other_year = np.argmin(np.abs(v.time[ii]+delta_year-v.time))
-                if np.abs((v.time[other_year]-v.time[ii]).astype(float)) > delta_tol:
-                    continue
-                good = np.isfinite(v.U[:,:,other_year])
-                u_temp[good] += v.U[:,:,other_year][good]
-                v_temp[good] += v.V[:,:,other_year][good]
-                w_temp[good] += 1
+            if annual:
+                for dt in [-delta_tol, delta_tol]:
+                    # try to calculate the average of the previous year and the
+                    # next year
+                    other_year = np.argmin(np.abs(v.time[ii]+delta_year-v.time))
+                    if np.abs((v.time[other_year]-v.time[ii]).astype(float)) > delta_tol:
+                        continue
+                    good = np.isfinite(v.U[:,:,other_year])
+                    u_temp[good] += v.U[:,:,other_year][good]
+                    v_temp[good] += v.V[:,:,other_year][good]
+                    eu2_temp[good] += v.eU[:,:,other_year][good]**2
+                    ev2_temp[good] += v.eV[:,:,other_year][good]**2
+                    w_temp[good] += 1
+            else:
+                for jj in [ii-1, ii+1]:
+                    # try to build the average of the previous time slice and the
+                    # next time slice
+                    if jj > 0 and jj < v.U.shape[2]:
+                        good = np.isfinite(v.U[:,:,jj])
+                        u_temp[good] += v.U[:,:,jj][good]
+                        v_temp[good] += v.V[:,:,jj][good]
+                        eu2_temp[good] += v.eU[:,:,jj][good]**2
+                        ev2_temp[good] += v.eV[:,:,jj][good]**2
+                        w_temp[good] += 1
             u_temp[w_temp > 0] /= w_temp[w_temp>0]
             v_temp[w_temp > 0] /= w_temp[w_temp>0]
+            eu2_temp[w_temp > 0] /= w_temp[w_temp>0]
+            ev2_temp[w_temp > 0] /= w_temp[w_temp>0]
             to_replace = ((~np.isfinite(this_U)) & (w_temp>0)).ravel()
             if np.any(to_replace):
                 this_U.ravel()[to_replace] = u_temp.ravel()[to_replace]
                 this_V.ravel()[to_replace] = v_temp.ravel()[to_replace]
+                this_eU.ravel()[to_replace] = np.sqrt(eu2_temp.ravel()[to_replace])
+                this_eV.ravel()[to_replace] = np.sqrt(ev2_temp.ravel()[to_replace])
             v_filled.U[:,:,ii]=this_U
             v_filled.V[:,:,ii]=this_V
+            v_filled.eU[:,:,ii]=this_eU
+            v_filled.eV[:,:,ii]=this_eV
+
+        if vel_mean is None:
+            vel_mean=self.calc_vel_mean(velocity=v_filled, w_smooth=w_smooth)
 
         # fill in the remaining gaps using the mean velocity field
         for ii in range(v.U.shape[2]):
-            this_U=v.U[:,:,ii].copy()
-            this_V=v.V[:,:,ii].copy()
+            this_U=v_filled.U[:,:,ii].copy()
+            this_V=v_filled.V[:,:,ii].copy()
             to_replace = (~np.isfinite(this_U)).ravel()
+            this_eU=v_filled.eU[:,:,ii].copy()
+            this_eV=v_filled.eV[:,:,ii].copy()
             if np.any(to_replace):
-                this_U.ravel()[to_replace] = vbar.U.ravel()[to_replace]
-                this_V.ravel()[to_replace] = vbar.V.ravel()[to_replace]
+                this_U.ravel()[to_replace] = vel_mean.U.ravel()[to_replace]
+                this_V.ravel()[to_replace] = vel_mean.V.ravel()[to_replace]
+                this_eU.ravel()[to_replace] = vel_mean.eU.ravel()[to_replace]
+                this_eV.ravel()[to_replace] = vel_mean.eV.ravel()[to_replace]
+
+            else:
+                continue
             v_filled.U[:,:,ii]=this_U
             v_filled.V[:,:,ii]=this_V
+            v_filled.eU[:,:,ii]=this_eU
+            v_filled.eV[:,:,ii]=this_eV
 
         self.velocity.V = v_filled.V
         self.velocity.U = v_filled.U
+        self.velocity.eV = v_filled.eV
+        self.velocity.eU = v_filled.eU
 
-    #PURPOSE: make an interpolation object to allow fast interpolation of the velocity field
-    def xy0_interpolator(self, bounds=None, t_range=None, t_step=None):
+    #PURPOSE: make interpolation objects to allow fast interpolation final displacements
+    def xy1_interpolator(self, bounds=None, t_range=None, t_step=None, blocksize=100,
+                         advection_time_step=0.25, report_progress=False):
+        '''
+        Make interpolation objects for the final position of parcels.
+
+        Parameters
+        ----------
+        bounds : iterable of iterables, optional
+            x and y bounds of the region to be interpolated.  If None,
+            the bounds of the velocity data are used. The default is None.
+        t_range : iterable of floats, optional
+            time bounds of the region to be interpolated, in seconds relative
+            to the epoch.  If None, the time bounds of the velocity
+            data is used. The default is None.
+        t_step : float, optional
+            time step, in time_units.  If None, the time values in the
+            velocity data are used.. The default is None.
+        advection_time_step : float, optional
+            reference time step for the advection object to use.  The default is 0.25 (years)
+        blocksize: int, optional
+            grid will be divided into blocks of this size, or run all at once if None
+
+        Returns
+        -------
+        grid_obj : pc.grid.data
+             grid object with fields x1 and y1 containing positions at time t for objects starting at (x, y) at the epoch.
+        '''
+        if t_range is None:
+            t_range = [np.nanmin(self.velocity.time), np.nanmax(self.velocity.time)]
+        if bounds is None:
+            bounds=self.velocity.bounds() + [t_range]
+        else:
+            if len(bounds)==2:
+                bounds += tuple([t_range])
+        if t_step is None:
+            # use the times on the velocity object
+            ti = self.velocity.t
+        else:
+            ti = np.arange(bounds[2][0], bounds[2][1]+t_step, t_step)
+        # define grids of working coordinates
+        dx=self.velocity.x[1]-self.velocity.x[0]
+        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
+        print([x0.shape, y0.shape])
+        xg, yg=np.meshgrid(x0, y0)
+        epoch=self.t0
+        # output grids:
+        xf, yf = [np.zeros((y0.size, x0.size, ti.size)) for jj in ['x','y']]
+
+        if blocksize is not None:
+            x_blocksize=blocksize
+            y_blocksize=blocksize
+        else:
+            x_blocksize=x0.size
+            y_blocksize=y0.size
+        last_t=time.time()
+        for row0 in np.arange(0, y0.size, y_blocksize):
+            rows=slice(row0, np.minimum(row0+y_blocksize, y0.size))
+            for col0 in np.arange(0, x0.size, x_blocksize):
+                cols=slice(col0, np.minimum(col0+x_blocksize, x0.size))
+                xg_sub=xg[rows, cols]
+                yg_sub=yg[rows, cols]
+                # advect points starting at the epoch, towards the beginning and
+                # end of the time series
+                for these in [np.flatnonzero(ti >= epoch), np.flatnonzero(ti < epoch)[::-1]]:
+                    # initialize at the epoch
+                    self.y, self.x, self.t = [jj.ravel() for jj in [yg_sub, xg_sub, np.zeros_like(xg_sub)+epoch]]
+                    for this_ind in these:
+                        self.t0=ti[this_ind]
+                        try:
+                            self.translate_parcel(step=advection_time_step)
+                        except ValueError:
+                            # ValueError is thrown when all points are outside the velocity map
+                            self.x0 *= np.NaN
+                            self.y0 *= np.NaN
+                        xf[rows, cols, this_ind]=self.x0.reshape(xg_sub.shape)
+                        yf[rows, cols, this_ind]=self.y0.reshape(xg_sub.shape)
+                        # update the initial coordinates for the next translation
+                        self.x=self.x0.copy()
+                        self.y=self.y0.copy()
+                        self.t=np.zeros_like(xg[rows, cols]).ravel()+ti[this_ind]
+                if report_progress:
+                    t_elapsed=time.time()-last_t
+                    last_t=time.time()
+                    print(f'row0={row0} out of {y0.size}, col0={col0} out of {x0.size}, dt={t_elapsed}')
+        # reset the epoch
+        self.t0 = epoch
+
+        grid_obj=pc.grid.data().from_dict({'x':x0,'y':y0, 't':ti, 'x1':xf,'y1':yf})
+
+        return grid_obj
+
+
+    #PURPOSE: interpolation objects to allow fast interpolation initial positions
+    def xy0_interpolator(self, bounds=None, t_range=None, t_step=None, advection_time_step=10, blocksize=100):
         """
         Build interpolation objects from initial to final positions
 
@@ -607,20 +812,18 @@ class advection():
             Can be specified as two iterables
             (x, y) or three (x, y, t). The default is None.
         t_range : iterable, optional
-            time range for the interpolation, in velocity time units.
-            If not specified, the time range of self.velocity
-            will be used.  The default is None.
+            time range for the interpolation, in velocity time units (seconds relative
+                to epoch).  If not specified, the time range of self.velocity
+                will be used.  The default is None.
         t_step : float, optional
-            The time step for the interpolation.
-            If not specified, the time values in the velocity object will be used.
-            The default is None.
-
+            The time step for the interpolation, in time_units.  If None,
+            the time values in the velocity object will be used. The default is None.
+        advection_time_step : float, optional
+            The time step to use in parcel tracking, in days.  The default is 5.
         Returns
         -------
-        interp_dict : dict
-            dictionary containing x and y interpolator objects giving the final
-            location of a parcel as a function of time.  Each should be called
-            with coordinates (y, x, time).
+        grid_obj : pc.grid.data
+             grid object with fields x0 and y0 containing positions at the epoch for parcels starting at x, y, t
         """
         # default time range is the maximum range of the velocity field
         if t_range is None:
@@ -637,33 +840,42 @@ class advection():
             # use the times on the velocity object
             ti = self.velocity.t
         else:
-            # use the specified time step
-            ti = np.arange(bounds[2][0], bounds[2][1] + t_step, t_step)
-        # x and y spacing of the velocity field
-        dx = self.velocity.x[1] - self.velocity.x[0]
-        dy = self.velocity.y[1] - self.velocity.y[0]
-        # x and y coordinates
-        x0 = np.arange(bounds[0][0] - dx, bounds[0][1] + dx, dx)
-        y0 = np.arange(bounds[1][0] - dy, bounds[1][1] + dy, dy)
-        # spatial and temporal coordinates
-        yg, xg, tg = np.meshgrid(x0, y0, ti, indexing='ij')
-        shp = xg.shape
-        self.x, self.y, self.t = [item.ravel() for item in (xg, yg, tg)]
-        self.translate_parcel()
-        # build interpolators
-        interp_dict = {}
-        interp_dict['x'] = scipy.interpolate.RegularGridInterpolator(
-            (y0, x0, ti),
-            self.x0.reshape(shp),
-            bounds_error = False
-        )
-        interp_dict['y'] = scipy.interpolate.RegularGridInterpolator(
-            (y0, x0, ti),
-            self.y0.reshape(shp),
-            bounds_error = False
-        )
-        # return the interpolator dictionary
-        return interp_dict
+            ti = np.arange(bounds[2][0], bounds[2][1]+t_step, t_step)
+        dx=self.velocity.x[1]-self.velocity.x[0]
+
+        x0, y0 = [np.arange(bb[0]-dx, bb[1]+dx, dx) for bb in bounds[0:2]]
+        yg, xg, tg = np.meshgrid(y0, x0, ti, indexing='ij')
+        x_init, y_init = [np.zeros_like(ii) for ii in [xg, yg]]
+        shp=xg.shape
+
+        if blocksize is not None:
+            x_blocksize=blocksize
+            y_blocksize=blocksize
+        else:
+            x_blocksize=x0.size
+            y_blocksize=y0.size
+        for t_ind in range(len(ti)):
+            for row0 in np.arange(0, y0.size, y_blocksize):
+                rows=slice(row0, np.minimum(row0+y_blocksize, y0.size))
+                for col0 in np.arange(0, x0.size, x_blocksize):
+                    cols=slice(col0, np.minimum(col0+x_blocksize, x0.size))
+                    xg_sub=xg[rows, cols, t_ind]
+                    yg_sub=yg[rows, cols, t_ind]
+                    tg_sub=tg[rows, cols, t_ind]
+                    self.x, self.y, self.t = [item.ravel() for item in (xg_sub, yg_sub, tg_sub)]
+                    try:
+                        self.translate_parcel(step=advection_time_step)
+                    except ValueError:
+                        # ValueError is thrown when all points are outside the velocity map
+                        self.x0 *= np.NaN
+                        self.y0 *= np.NaN
+                    x_init[rows, cols, t_ind] = self.x0.reshape(xg_sub.shape)
+                    y_init[rows, cols, t_ind] = self.y0.reshape(xg_sub.shape)
+
+
+        grid_obj = pc.grid.data().from_dict({'x':x0, 'y':y0,'t':ti,'x0':x_init,'y0':y_init})
+
+        return grid_obj
 
     # PURPOSE: translate a parcel between two times using an advection function
     def translate_parcel(self, **kwargs):
@@ -1188,7 +1400,7 @@ class advection():
         """
         Interpolate U and V velocities to coordinates using
         regular grid interpolation
-        
+
         Can use time-variable ``U`` and ``V`` velocities
 
         Parameters
@@ -1675,4 +1887,3 @@ class advection():
         Converts time to seconds
         """
         return timescale.time._to_sec[self.time_units]
-        
