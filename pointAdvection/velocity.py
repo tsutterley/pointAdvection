@@ -1,8 +1,14 @@
 import pointAdvection.utilities
+
 # attempt imports
 pc = pointAdvection.utilities.import_dependency('pointCollection')
 
-class velocity(pc.grid.data):
+try:
+    obj = pc.grid.data
+except AttributeError:
+    obj = object
+
+class velocity(obj):
     def __init__(self):
         self.t=None
         super(velocity, self).__init__()
