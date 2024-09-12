@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 combine_icelines_fronts.py
-Written by Tyler Sutterley (04/2024)
+Written by Tyler Sutterley (09/2024)
 Combines ice front masks into mosaics
 
 COMMAND LINE OPTIONS:
@@ -19,6 +19,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 09/2024: use wrapper to importlib for optional dependencies
     Updated 04/2024: use timescale for temporal operations
     Updated 03/2024: added option to use quarterly masks
     Updated 05/2023: using pathlib to define and expand paths
@@ -32,34 +33,15 @@ import time
 import logging
 import pathlib
 import argparse
-import warnings
 import traceback
 import numpy as np
-import pointAdvection
+import pointAdvection.utilities
 
 # attempt imports
-try:
-    import pointCollection as pc
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("pointCollection not available", ImportWarning)
-try:
-    import pyproj
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("pyproj not available", ImportWarning)
-try:
-    import timescale
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("timescale not available", ImportWarning)
-try:
-    import xarray as xr
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("xarray not available", ImportWarning)
-# ignore warnings
-warnings.filterwarnings("ignore")
+pc = pointAdvection.utilities.import_dependency('pointCollection')
+pyproj = pointAdvection.utilities.import_dependency('pyproj')
+timescale = pointAdvection.utilities.import_dependency('timescale')
+xr = pointAdvection.utilities.import_dependency('xarray')
 
 # PURPOSE: keep track of threads
 def info(args):
@@ -174,7 +156,7 @@ def combine_icelines_fronts(base_dir, regions,
                 region = pc.grid.data().from_geotif(str(region_file))
                 region.z = np.nan_to_num(region.z, nan=0).astype(np.uint8)
                 # get image coordinate of regional mask
-                indy, indx = output.image_coordinates(region)                
+                indy, indx = output.image_coordinates(region)
                 # update mask
                 for t in range(indt, nt):
                     output.mask[indy, indx, t] = region.z[:,:]

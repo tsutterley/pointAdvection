@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pointAdvection"
+description = "Utilities for advecting point data for use in a Lagrangian reference frame"
+keywords = [
+    "ICESat-2",
+    "surface elevation and change",
+    "advection",
+    "mass transport",
+    "Lagrangian reference frame",
+]
+authors = [
+    {name = "Tyler Sutterley"},
+    {email = "tsutterl@uw.edu"}
+]
+maintainers = [
+    {name = "pointAdvection contributors"}
+]
+license = {file = "LICENSE"}
+readme = "README.rst"
+
+requires-python = "~=3.6"
+dependencies = [
+    "h5py",
+    "lxml",
+    "matplotlib",
+    "netCDF4",
+    "numpy",
+    "pointCollection @ git+https://github.com/SmithB/pointCollection.git",
+    "pyproj",
+    "python-dateutil",
+    "scipy>=1.10.1",
+    "timescale>=0.0.3"
+]
+
+dynamic = ["version"]
+
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Repository = "https://github.com/SmithB/pointAdvection"
+Issues = "https://github.com/SmithB/pointAdvection/issues"
+
+[project.optional-dependencies]
+all = ["fiona", "gdal", "notebook", "shapely"]
+dev = ["flake8", "pytest>=4.6", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+exclude = ["test*"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+norecursedirs = ".git"
+python_files = [
+    "test*.py"
+]
+testpaths = [
+    "test"
+]

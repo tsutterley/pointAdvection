@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 mask_icelines_fronts.py
-Written by Tyler Sutterley (04/2024)
+Written by Tyler Sutterley (09/2024)
 Creates time-variable ice front masks using data from
     the DLR Icelines Download Service
 https://download.geoservice.dlr.de/icelines/files/
@@ -26,6 +26,7 @@ COMMAND LINE OPTIONS:
     -M X, --mode X: permissions mode of the output files
 
 UPDATE HISTORY:
+    Updated 09/2024: use wrapper to importlib for optional dependencies
     Updated 04/2024: use timescale for temporal operations
     Updated 06/2023: verify geotiff file input to GDAL is a string
         deprecation fix for end of line segment boundary
@@ -42,40 +43,18 @@ import logging
 import pathlib
 import argparse
 import datetime
-import warnings
 import posixpath
 import traceback
 import numpy as np
-import pointAdvection
+import pointAdvection.utilities
 
 # attempt imports
-try:
-    import fiona
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("fiona not available", ImportWarning)
-try:
-    import pointCollection as pc
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("pointCollection not available", ImportWarning)
-try:
-    import pyproj
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("pyproj not available", ImportWarning)
-try:
-    import shapely.geometry
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("shapely not available", ImportWarning)
-try:
-    import timescale
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("timescale not available", ImportWarning)
-# ignore warnings
-warnings.filterwarnings("ignore")
+fiona = pointAdvection.utilities.import_dependency('fiona')
+pc = pointAdvection.utilities.import_dependency('pointCollection')
+pyproj = pointAdvection.utilities.import_dependency('pyproj')
+shapely = pointAdvection.utilities.import_dependency('shapely')
+shapely.geometry = pointAdvection.utilities.import_dependency('shapely.geometry')
+timescale = pointAdvection.utilities.import_dependency('timescale')
 
 # PURPOSE: keep track of threads
 def info(args):

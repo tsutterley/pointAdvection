@@ -1,14 +1,22 @@
-import pointCollection as pc
+import pointAdvection.utilities
 
-class velocity(pc.grid.data):
+# attempt imports
+pc = pointAdvection.utilities.import_dependency('pointCollection')
+
+try:
+    obj = pc.grid.data
+except AttributeError:
+    obj = object
+
+class velocity(obj):
     def __init__(self):
         self.t=None
         super(velocity, self).__init__()
-        
+
     def from_file(self, filename, format='NSIDC-0725', **kwargs):
-        
+
         if format in ['NSIDC-0725','NSIDC-0727', 'NSIDC-0731', 'NSIDC-0766']:
-            field_dict={'U':vx,'V':vy,'eU':'ex','eV':'ey'}
+            field_dict={'U':'vx','V':'vy','eU':'ex','eV':'ey'}
             self=self.from_h5(filename, field_mapping=field_dict, **kwargs)
         elif format=='NSIDC-0720' or format=='NSIDC-0484':
             field_dict={'U':'VX','V':'VY','eU':'ERRX','eV':'ERRY'}

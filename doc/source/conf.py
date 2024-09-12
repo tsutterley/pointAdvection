@@ -14,18 +14,23 @@ import os
 # import sys
 import datetime
 # sys.path.insert(0, os.path.abspath('.'))
+import importlib.metadata
 
 
 # -- Project information -----------------------------------------------------
 
-project = 'pointAdvection'
+# package metadata
+metadata = importlib.metadata.metadata("pointAdvection")
+project = metadata["Name"]
 year = datetime.date.today().year
 copyright = f"2022\u2013{year}, Tyler C. Sutterley"
 author = 'Tyler C. Sutterley'
 
 # The full version, including alpha/beta/rc tags
-with open(os.path.abspath('../../version.txt')) as fh:
-    release = fh.read()
+# get semantic version from setuptools-scm
+version = metadata["version"]
+# append "v" before the version
+release = f"v{version}"
 
 # -- General configuration ---------------------------------------------------
 

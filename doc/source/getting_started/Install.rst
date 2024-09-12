@@ -35,17 +35,17 @@ To use this repository, please fork into your own account and then clone onto yo
 
     git clone https://github.com/tsutterley/pointAdvection.git
 
-Can then install using ``setuptools``
-
-.. code-block:: bash
-
-    python setup.py install
-
-or ``pip``
+Can then install using ``pip``:
 
 .. code-block:: bash
 
     python3 -m pip install --user .
+
+To include all optional dependencies:
+
+.. code-block:: bash
+
+   python3 -m pip install --user .[all]
 
 Alternatively can install the utilities directly from GitHub with ``pip``:
 
