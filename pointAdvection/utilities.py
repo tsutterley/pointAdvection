@@ -25,6 +25,7 @@ import io
 import ssl
 import inspect
 import hashlib
+import logging
 import pathlib
 import warnings
 import importlib
