@@ -55,7 +55,7 @@ This software is also dependent on other commonly used Python packages:
 - `pyproj: Python interface to PROJ library <https://pypi.org/project/pyproj/>`_
 - `scipy: Scientific Tools for Python <https://docs.scipy.org/doc//>`_
 - `shapely: PostGIS-ish operations outside a database context for Python <http://toblerity.org/shapely/index.html>`_
-- `timescale: Python tools for time and astronomical calculations <https://pypi.python.org/pypi/timescale>`_
+- `timescale: Python tools for time and astronomical calculations <https://pypi.org/project/timescale/>`_
 
 Disclaimer
 ##########
