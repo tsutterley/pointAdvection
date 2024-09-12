@@ -21,7 +21,6 @@ maintainers = [
 ]
 license = {file = "LICENSE"}
 readme = "README.rst"
-version = "0.0.0.1"
 
 requires-python = "~=3.6"
 dependencies = [
@@ -36,6 +35,8 @@ dependencies = [
     "scipy>=1.10.1",
     "timescale>=0.0.3"
 ]
+
+dynamic = ["version"]
 
 classifiers=[
     "Development Status :: 3 - Alpha",
@@ -60,10 +61,6 @@ Issues = "https://github.com/SmithB/pointAdvection/issues"
 [project.optional-dependencies]
 all = ["fiona", "gdal", "notebook", "shapely"]
 dev = ["flake8", "pytest>=4.6", "pytest-cov"]
-
-[project.scripts]
-"combine_icelines_fronts.py" = "pointAdvection.scripts.combine_icelines_fronts:main"
-"mask_icelines_fronts.py" = "pointAdvection.scripts.mask_icelines_fronts:main"
 
 [tool.setuptools.packages.find]
 exclude = ["test*"]
