@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 tools.py
-Written by Tyler Sutterley (04/2024)
+Written by Tyler Sutterley (09/2024)
 Plotting tools for visualization
 
 PYTHON DEPENDENCIES:
@@ -13,6 +13,7 @@ PYTHON DEPENDENCIES:
         https://github.com/matplotlib/matplotlib
 
 UPDATE HISTORY:
+    Updated 09/2024: use wrapper to importlib for optional dependencies
     Updated 04/2024: add catch for existing colormaps
     Updated 05/2023: using pathlib to define and expand paths
     Updated 12/2022: use f-strings for ascii and verbose formatting
@@ -22,8 +23,10 @@ import re
 import pathlib
 import colorsys
 import numpy as np
-import matplotlib.cm as cm
-import matplotlib.colors as colors
+import pointAdvection.utilities
+# attempt imports
+cm = pointAdvection.utilities.import_dependency('matplotlib.cm')
+colors = pointAdvection.utilities.import_dependency('matplotlib.colors')
 
 def from_cpt(filename, use_extremes=True, **kwargs):
     """

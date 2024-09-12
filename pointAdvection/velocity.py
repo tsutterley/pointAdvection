@@ -1,4 +1,6 @@
-import pointCollection as pc
+import pointAdvection.utilities
+# attempt imports
+pc = pointAdvection.utilities.import_dependency('pointCollection')
 
 class velocity(pc.grid.data):
     def __init__(self):

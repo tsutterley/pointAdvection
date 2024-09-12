@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 advection.py
-Written by Tyler Sutterley and Ben Smith (05/2024)
+Written by Tyler Sutterley and Ben Smith (09/2024)
 Routines for advecting ice parcels using velocity estimates
 
 PYTHON DEPENDENCIES:
@@ -22,6 +22,7 @@ PYTHON DEPENDENCIES:
         https://github.com/SmithB/pointCollection
 
 UPDATE HISTORY:
+    Updated 09/2024: use wrapper to importlib for optional dependencies
     Updated 05/2024: make subscriptable and allow item assignment
     Updated 04/2024: added base level attribute for time units
     Updated 05/2023: add fill gaps function and xy0 interpolator
@@ -52,29 +53,19 @@ import os
 import io
 import re
 import copy
+import time
 import logging
 import pathlib
-import warnings
 import numpy as np
 import scipy.interpolate
 import scipy.spatial
-import matplotlib.pyplot as plt
-import matplotlib.tri as mtri
-import time
+import pointAdvection.utilities
+
 # attempt imports
-try:
-    import pointCollection as pc
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("pointCollection not available", ImportWarning)
-# attempt imports
-try:
-    import timescale
-except (AttributeError, ImportError, ModuleNotFoundError) as exc:
-    warnings.filterwarnings("module")
-    warnings.warn("timescale not available", ImportWarning)
-# ignore warnings
-warnings.filterwarnings("ignore")
+plt = pointAdvection.utilities.import_dependency('matplotlib.pyplot')
+mtri = pointAdvection.utilities.import_dependency('matplotlib.mtri')
+pc = pointAdvection.utilities.import_dependency('pointCollection')
+timescale = pointAdvection.utilities.import_dependency('timescale')
 
 class advection():
     """
