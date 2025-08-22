@@ -253,7 +253,7 @@ class advection():
             group: str | None = None,
             bounds: list | np.ndarray | None = None,
             buffer: float | None = 5e4,
-            scale: float = 1.0/31557600.0):#, **kwargs):
+            scale: float = 1.0/31557600.0, **kwargs):
         """
         Read netCDF4 velocity file and extract x and y velocities
 
