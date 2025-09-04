@@ -248,13 +248,12 @@ class advection():
 
     # PURPOSE: read netCDF4 velocity file and extract x and y velocities
     def from_nc(self,
-            filename: str | io.IOBase,
+            filename: str | io.IOBase | None=None,
             field_mapping: dict = dict(U='VX', V='VY'),
             group: str | None = None,
             bounds: list | np.ndarray | None = None,
             buffer: float | None = 5e4,
-            scale: float = 1.0/31557600.0, **kwargs
-        ):
+            scale: float = 1.0/31557600.0, **kwargs):
         """
         Read netCDF4 velocity file and extract x and y velocities
 
@@ -275,14 +274,18 @@ class advection():
         scale: float, default None
             scaling factor for converting velocities to common units
         """
-        if self.x is None or not np.any(np.isfinite(self.x)):
-            raise(ValueError('need to assign x and y before reading velocities'))
+        #if self.x is None or not np.any(np.isfinite(self.x)):
+        #    raise(ValueError('need to assign x and y before reading velocities'))
+        if self.filename is None:
+            raise(ValueError('need to assign filename before reading velocities')) 
+        '''
         # set default keyword arguments
         kwargs.setdefault('field_mapping', {'U':'VX', 'V':'VY'})
         kwargs.setdefault('group', None)
         kwargs.setdefault('bounds', None)
         kwargs.setdefault('buffer', 5e4)
         kwargs.setdefault('scale', 1.0)
+        
         # check input arguments
         assert isinstance(filename, (str, pathlib.Path)), \
             'filename must be a string or file object'
@@ -305,10 +308,10 @@ class advection():
         # set scale for converting velocities to common units
         scale = np.float64(kwargs['scale'])
         # read input velocity file from netCDF4
-
+        '''
         self.velocity = pc.grid.data().from_nc(self.filename,
             field_mapping=field_mapping, group=group,
-            bounds=bounds, **kwargs)
+            bounds=bounds)#, **kwargs)
         # attempt to read the error terms
         try:
             temp = pc.grid.data().from_nc(self.filename,
